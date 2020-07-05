@@ -2337,6 +2337,8 @@ void FE3D_ALE::SolveMeshMatrix(TFESpace3D* fespace, TFEVectFunct3D* MeshVelocity
 			if(fabs(Bd_FreeSurf_normal_2[i]) > 1e-3)
 			{
 				cnt++;
+
+				// Apply Contraint on X 
 				meshVelocityatFreeSurface_2[i] 	+=  meshVelocityatFreeSurface_3[i]*(Bd_FreeSurf_normal_3[i]/Bd_FreeSurf_normal_2[i]) ;
 			
 
