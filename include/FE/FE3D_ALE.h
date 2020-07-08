@@ -22,7 +22,9 @@
 #include <vector>
 #include<FE3D.h>
 #include<Domain.h>
-#include<cudaSparseLinearSolvers.h>
+#ifdef  _CUDA
+    #include<cudaSparseLinearSolvers.h>
+#endif  //_CUDA
 
 
 
@@ -320,11 +322,8 @@ class FE3D_ALE{
 
        void clearCudaVariables();
         
-
-
         // --- Normal Calculation function ---- //
         // __global__ void C_calculate_normals_freeSurf(int N_FreeSurfvertex, int N_VertexPerCell);
-
 
         #endif  //
 
