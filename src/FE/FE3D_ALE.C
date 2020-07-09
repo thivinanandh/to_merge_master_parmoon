@@ -49,12 +49,15 @@
 #include <NodalFunctional3D.h>
 #include <mkl.h>
 #include <bits/stdc++.h>
-#include<cuda.h>
-#include "helper_cuda.h"
+#ifdef  _CUDA
+	#include<cuda.h>
+	#include "helper_cuda.h"
+	#include "nvToolsExt.h"
+#endif  //_CUDA
+
 #include <omp.h>
 #include <chrono> 
 
-#include "nvToolsExt.h"
 
 const uint32_t colors[] = { 0xff00ff00, 0xff0000ff, 0xffffff00, 0xffff00ff, 0xff00ffff, 0xffff0000, 0xffffffff };
 const int num_colors = sizeof(colors)/sizeof(uint32_t);
@@ -2125,6 +2128,8 @@ void FE3D_ALE::constructGlobalStiffness(TSquareMatrix3D **sqmatrices, int*& RowP
 
     N_Entries = n_row * n_column * sqmatrices[0]->GetN_Entries();
 
+	#ifdef _CUDA
+	
 	if(TDatabase::ParamDB->CUDASOLVERFLAG == 1)
 	{
 		cudaHostAlloc((void**)&Entries, sizeof(double)*N_Entries, cudaHostAllocDefault) ;
@@ -2134,10 +2139,16 @@ void FE3D_ALE::constructGlobalStiffness(TSquareMatrix3D **sqmatrices, int*& RowP
 	}
 	else
 	{
+	#endif //_CUDA
+		
 		Entries = new double[N_Entries];
     	RowPtr = new int[N_Rows * n_row + 1];
     	KCol = new int[N_Entries];
+	
+	#ifdef _CUDA
 	}
+	#endif //_CUDA
+	
 
 
     N_Row = N_Rows * n_row;
@@ -2269,15 +2280,17 @@ void FE3D_ALE::AssembleMeshMatrix(TFESpace3D* fespace, TFEVectFunct3D* MeshVeloc
 	POP_RANGE;
 
 
-	
+	#ifdef _CUDA
 	// If Cuda Solver is Selected , Solve here, Else Solve in THe Solve MEsh Matrix Routine
 	if(TDatabase::ParamDB->CUDASOLVERFLAG && FactoriseFlag)
 	{	
 		FactoriseGlobalMeshMatrix(SQMATRICES_GRID, 3, 3);
 	}
+	#endif  // _CUDA
 
 }
 
+#ifdef _CUDA
 
 void FE3D_ALE::FactoriseGlobalMeshMatrix(TSquareMatrix3D **sqmatrices, int n_row , int n_column)
 {
@@ -2315,8 +2328,10 @@ void FE3D_ALE::FactoriseGlobalMeshMatrix(TSquareMatrix3D **sqmatrices, int n_row
 		}
 	}
 }
+#endif  // _CUDA
 
 
+#ifdef _CUDA
 void FE3D_ALE::SolveMeshMatrix(TFESpace3D* fespace, TFEVectFunct3D* MeshVelocityVectFunction3D)
 {
 	TFESpace3D* Meshfespace = MeshVelocityVectFunction3D->GetFESpace3D();
@@ -2471,6 +2486,7 @@ void FE3D_ALE::SolveMeshMatrix(TFESpace3D* fespace, TFEVectFunct3D* MeshVelocity
 	if(sol) delete[] sol;
 }
 
+#endif //_CUDA
 
 double FE3D_ALE::getMaximumElevation(TFEVectFunct3D* MeshVelocityVectFunction3D)
 {

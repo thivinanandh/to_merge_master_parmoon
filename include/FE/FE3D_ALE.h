@@ -170,7 +170,7 @@ class FE3D_ALE{
         double InitialMeshMinDiameter;
         double InitialMeshMinVolume;
 
-        // #ifdef _CUDA
+        #ifdef _CUDA
         // MESH CUDA SOLVE CLASS VALUES
         cudaRefactor* cudaSolverReFactLU;
         cudaLowLevelQR* cudaSolverLowLevQR;
@@ -247,7 +247,7 @@ class FE3D_ALE{
         int C_NUM_THREADS_PER_BLOCK;
         int C_NUM_BLOCKS = 1;
         
-        // #endif
+        #endif
 
 
         double* GlobRhs;
