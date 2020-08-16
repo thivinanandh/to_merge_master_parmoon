@@ -1,3 +1,29 @@
+/** ==========================================================================
+#    This file is part of the finite element software ParMooN.
+# 
+#    ParMooN (cmg.cds.iisc.ac.in/parmoon) is a free finite element software  
+#    developed by the research groups of Prof. Sashikumaar Ganesan (IISc, Bangalore),
+#    Prof. Volker John (WIAS Berlin) and Prof. Gunar Matthies (TU-Dresden):
+#
+#    ParMooN is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU Affero General Public License as
+#    published by the Free Software Foundation, either version 3 of the
+#    License, or (at your option) any later version.
+#
+#    ParMooN is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU Affero General Public License for more details.
+#
+#    You should have received a copy of the GNU Affero General Public License
+#    along with ParMooN.  If not, see <http://www.gnu.org/licenses/>.
+#
+#    If your company is selling a software using ParMooN, please consider 
+#    the option to obtain a commercial license for a fee. Please send 
+#    corresponding requests to sashi@iisc.ac.in
+
+# =========================================================================*/ 
+   
 // =======================================================================
 // @(#)NSE_MGLevel.C        1.16 07/03/00
 //
@@ -255,6 +281,76 @@ void TNSE_MGLevel::Reset(double *v1)
 {
   memset(v1, 0, N_DOF*SizeOfDouble);
 }
+
+#ifdef _MPI
+#ifdef _HYBRID
+#ifdef _CUDA
+void TNSE_MGLevel::CellVanka_GPU(double *u1, double *rhs1, double *aux,
+        int N_Parameters, double *Parameters, int smoother, int smooth, cudaStream_t *stream, int* d_ARowPtr, int*  d_AKCol,
+        double* d_A11Entries, double* d_A12Entries, double* d_A13Entries,
+        double* d_A21Entries, double* d_A22Entries, double* d_A23Entries,
+        double* d_A31Entries, double* d_A32Entries, double* d_A33Entries,
+        int* d_BTRowPtr, int*  d_BTKCol,
+        double* d_B1TEntries, double* d_B2TEntries, double* d_B3TEntries,
+        int* d_BRowPtr, int*  d_BKCol,
+        double* d_B1Entries, double* d_B2Entries, double* d_B3Entries)
+{
+    
+}
+
+void TNSE_MGLevel::CellVanka_CPU_GPU(double *u1, double *rhs1, double *aux,
+        int N_Parameters, double *Parameters, int smoother, int smooth, cudaStream_t *stream, int* d_ARowPtr, int*  d_AKCol,
+        double* d_A11Entries, double* d_A12Entries, double* d_A13Entries,
+        double* d_A21Entries, double* d_A22Entries, double* d_A23Entries,
+        double* d_A31Entries, double* d_A32Entries, double* d_A33Entries,
+        int* d_BTRowPtr, int*  d_BTKCol,
+        double* d_B1TEntries, double* d_B2TEntries, double* d_B3TEntries,
+        int* d_BRowPtr, int*  d_BKCol,
+        double* d_B1Entries, double* d_B2Entries, double* d_B3Entries)
+{
+    
+}
+
+void TNSE_MGLevel::CellVanka_Level_Split(double *u1, double *rhs1, double *aux,
+        int N_Parameters, double *Parameters, int smoother, int smooth)
+{
+    
+}
+
+void TNSE_MGLevel::CellVanka_Combo(double *u1, double *rhs1, double *aux,
+        int N_Parameters, double *Parameters, int smoother, int smooth, cudaStream_t *stream, int* d_ARowPtr, int*  d_AKCol,
+        double* d_A11Entries, double* d_A12Entries, double* d_A13Entries,
+        double* d_A21Entries, double* d_A22Entries, double* d_A23Entries,
+        double* d_A31Entries, double* d_A32Entries, double* d_A33Entries,
+        int* d_BTRowPtr, int*  d_BTKCol,
+        double* d_B1TEntries, double* d_B2TEntries, double* d_B3TEntries,
+        int* d_BRowPtr, int*  d_BKCol,
+        double* d_B1Entries, double* d_B2Entries, double* d_B3Entries)
+{
+    
+}
+
+void TNSE_MGLevel::NodalVanka_GPU(double *u1, double *rhs1, double *aux,
+        int N_Parameters, double *Parameters, int smoother, int smooth)
+{
+    
+}
+
+void TNSE_MGLevel::NodalVanka_CPU_GPU(double *u1, double *rhs1, double *aux,
+        int N_Parameters, double *Parameters, int smoother, int smooth)
+{
+    
+}
+
+void TNSE_MGLevel::NodalVanka_Level_Split(double *u1, double *rhs1, double *aux,
+        int N_Parameters, double *Parameters, int smoother, int smooth)
+{
+    
+}
+
+#endif
+#endif
+#endif
 
 /** Vanka smoother, GAUSS-SEIDEL type */
 void TNSE_MGLevel::CellVanka(double *u1, double *rhs1, double *aux,

@@ -1,3 +1,29 @@
+/** ==========================================================================
+#    This file is part of the finite element software ParMooN.
+# 
+#    ParMooN (cmg.cds.iisc.ac.in/parmoon) is a free finite element software  
+#    developed by the research groups of Prof. Sashikumaar Ganesan (IISc, Bangalore),
+#    Prof. Volker John (WIAS Berlin) and Prof. Gunar Matthies (TU-Dresden):
+#
+#    ParMooN is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU Affero General Public License as
+#    published by the Free Software Foundation, either version 3 of the
+#    License, or (at your option) any later version.
+#
+#    ParMooN is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU Affero General Public License for more details.
+#
+#    You should have received a copy of the GNU Affero General Public License
+#    along with ParMooN.  If not, see <http://www.gnu.org/licenses/>.
+#
+#    If your company is selling a software using ParMooN, please consider 
+#    the option to obtain a commercial license for a fee. Please send 
+#    corresponding requests to sashi@iisc.ac.in
+
+# =========================================================================*/ 
+   
 // =======================================================================
 // @(#)FgmresIte.C        1.24 06/27/00
 //
@@ -40,6 +66,11 @@
     
 #endif
 
+extern double tP,tR,tSmoother2, tSmoother3;
+
+#ifndef _CUDA
+double tSmoother3=0;
+#endif
 
 TFgmresIte::TFgmresIte(MatVecProc *MatVec,
 			DefectProc *Defect,
@@ -221,13 +252,15 @@ TMatrix **mat, double *sol,
 double *rhs)
 {
   int i=0, j,k,l, verbose = TDatabase::ParamDB->SC_VERBOSE;
-  int maxite;
-  double res, res0, reslast, t1, t2, temp,tempGlobal;
+  int maxite, rank;
+  double res, res0, reslast, t1, t2, temp,tempGlobal, tfgmres;
   double beta,residlast,dnorm0,end_residual;
   double eps = 1e-14;
   
   int flexible = TDatabase::ParamDB->SC_FLEXIBLE_KRYLOV_SPACE_SOLVER; 
-  
+  #ifdef _MPI
+  MPI_Comm_rank(MPI_COMM_WORLD,&rank);
+  #endif
 // ========== 	check flexibility parameter   ========================
    // ======================== decide between parallel GMRES and sequential ===========
    // =================================================================
@@ -235,7 +268,12 @@ double *rhs)
    
   if(flexible)
   {
-    t1 = GetTime();
+    	  #ifdef _MPI
+  t1 = MPI_Wtime();
+#else
+  t1 = GetTime();  
+#endif 
+
 
 #ifdef _MPI
   TDatabase::ParamDB->time_GMRES_start = MPI_Wtime();
@@ -247,12 +285,12 @@ double *rhs)
 
 
     
-      int ii, rank, *MasterOfDof, *MasterOfDofU,*MasterOfDofP;  
+      int ii, *MasterOfDof, *MasterOfDofU,*MasterOfDofP;  
       double  resglobal=0.0;
       int N_U = ParCommU->GetNDof();
       int N_P = ParCommP->GetNDof();
       
-      MPI_Comm_rank(MPI_COMM_WORLD,&rank);
+      // MPI_Comm_rank(MPI_COMM_WORLD,&rank);
 
 #endif 
 
@@ -454,19 +492,9 @@ cout << "==========	After "<< k+1 <<" multigrid sweep "<< res <<"	==============
           // COMMUPDATE REQURIED? 
           
     // ======= SOLUTION IS UPDATED HERE
-	  
-	  t2 = GetTime();
-          if (verbose>=1
-#ifdef _MPI
-          && rank==0
-#endif
-          ){
-            OutPut("FGMRES ITE: " << setw(4) << j);
-            OutPut(" t: " << setw(6) << t2-t1);
-            OutPut(" t/cyc: " << setw(6) << (t2-t1)/j);
-            OutPut(" res : "  << setw(8) << res);
-            OutPut(" rate: " << pow(res/res0,1.0/j) << endl);
-          }
+	
+  
+
           if (verbose==-2
 #ifdef _MPI
             && rank==0
@@ -489,6 +517,33 @@ cout << "==========	After "<< k+1 <<" multigrid sweep "<< res <<"	==============
 #endif
 
 TDatabase::ParamDB->time_GMRES += TDatabase::ParamDB->time_GMRES_end - TDatabase::ParamDB->time_GMRES_start; 
+
+#ifdef _MPI
+  t2 = MPI_Wtime();
+#else
+  t2 = GetTime();  
+#endif 
+  tfgmres += t2-t1 ;
+
+#ifdef _MPI
+  // cout<<"rank"<<rank<<endl;
+          if(rank==0)
+          {
+#endif
+          
+            OutPut("FGMRES ITE: " << setw(4) << j <<endl);
+            // OutPut(" t: " << setw(6) << t2-t1);
+            // OutPut(" t/cyc: " << setw(6) << (t2-t1)/j);
+            OutPut(" t (total time taken for FGMRES) : " << setw(6) << tfgmres <<endl);
+            OutPut(" res : "  << setw(8) << res <<endl);
+            OutPut(" rate: " << pow(res/res0,1.0/j) << endl);
+            OutPut(" tSmoother: " << setw(6) << tSmoother2 <<endl);
+            OutPut(" tCyc (time taken for all MG cycles in FGMRES) : " << setw(6) << TDatabase::ParamDB->time_MG <<endl);
+            OutPut(" tP (Prolongation): " << setw(6) << tP <<endl);
+            OutPut(" tR (Restriction) : " << setw(6) << tR<<endl);
+#ifdef _MPI
+          }
+#endif
 
       return(j); // RETURN THE NUMBER OF ITERATIONS THAT TOOK PLACE
 	  
@@ -589,6 +644,33 @@ TDatabase::ParamDB->time_GMRES += TDatabase::ParamDB->time_GMRES_end - TDatabase
 #endif
 
 TDatabase::ParamDB->time_GMRES += TDatabase::ParamDB->time_GMRES_end - TDatabase::ParamDB->time_GMRES_start; 
+
+#ifdef _MPI
+  t2 = MPI_Wtime();
+#else
+  t2 = GetTime();  
+#endif 
+  tfgmres += t2-t1 ;
+
+  #ifdef _MPI
+  cout<<"rank"<<rank<<endl;
+          if(rank==0)
+          {
+#endif
+          
+            OutPut("FGMRES ITE: " << setw(4) << j <<endl);
+            // OutPut(" t: " << setw(6) << t2-t1);
+            // OutPut(" t/cyc: " << setw(6) << (t2-t1)/j);
+            OutPut(" t (total time taken for FGMRES) : " << setw(6) << tfgmres <<endl);
+            OutPut(" res : "  << setw(8) << res <<endl);
+            OutPut(" rate: " << pow(res/res0,1.0/j) << endl);
+            OutPut(" tSmoother: " << setw(6) << tSmoother2 <<endl);
+            OutPut(" tCyc (time taken for all MG cycles in FGMRES) : " << setw(6) << TDatabase::ParamDB->time_MG <<endl);
+            OutPut(" tP (Prolongation): " << setw(6) << tP <<endl);
+            OutPut(" tR (Restriction) : " << setw(6) << tR<<endl);
+#ifdef _MPI
+          }
+#endif
  
         return(j);
     // =============================== END BY RETURNING THE NUMBER OF ITERATIONS =============== 
@@ -768,6 +850,8 @@ TDatabase::ParamDB->time_GMRES += TDatabase::ParamDB->time_GMRES_end - TDatabase
     	  
     return(j);
   }
+
+  
 }
 
 double TFgmresIte::Dotprod(int x, double* v1, double* v2)
@@ -868,3 +952,618 @@ void TFgmresIte::update(double* &v1)
 #endif
 
 }
+
+#ifdef _CUDA
+int TFgmresIte::IterateGPU(TSquareMatrix **sqmat, TMatrix **mat, double *sol, double *rhs, int cycle_index){
+
+      int i=0, j,k,l, verbose = TDatabase::ParamDB->SC_VERBOSE;
+      int maxite;
+      double res, res0, reslast, t1, t2, temp,tempGlobal;
+      double beta,residlast,dnorm0,end_residual;
+      double eps = 1e-14;
+      double tfgmres;
+      
+      int flexible = TDatabase::ParamDB->SC_FLEXIBLE_KRYLOV_SPACE_SOLVER; 
+      
+    // ========== 	check flexibility parameter   ========================
+      // ======================== decide between parallel GMRES and sequential ===========
+      // =================================================================
+      
+      
+      if(flexible)
+      {
+
+        #ifdef _MPI
+  t1 = MPI_Wtime();
+#else
+  t1 = GetTime();  
+#endif 
+
+    #ifdef _MPI
+      TDatabase::ParamDB->time_GMRES_start = MPI_Wtime();
+    #else
+      TDatabase::ParamDB->time_GMRES_start = GetTime();
+    #endif
+          
+    #ifdef _MPI  
+
+
+        
+          int ii, rank, *MasterOfDof, *MasterOfDofU,*MasterOfDofP;  
+          double  resglobal=0.0;
+          int N_U = ParCommU->GetNDof();
+          int N_P = ParCommP->GetNDof();
+          
+          MPI_Comm_rank(MPI_COMM_WORLD,&rank);
+
+    #endif 
+
+        if (verbose>1
+        #ifdef _MPI
+        && rank==0
+        #endif
+        )   
+          OutPut("Entering fgmres" << endl);
+        
+        if ((TDatabase::ParamDB->INTERNAL_GMRES_INFO)&&(verbose==-1)){
+          OutPut("fgmres maxite " << maxit << " restart " << restart << endl);
+          TDatabase::ParamDB->INTERNAL_GMRES_INFO = 0;
+        }
+
+    // ======== COMPUTE RESIDUAL ========
+
+        matvecdefect(sqmat, mat, sol, rhs, v[0]); // Assume sol, rhs are updated 
+        update(v[0]);
+        // no need to update v for beta
+
+    // ================== COMPUTE BETA VALUE ======================    
+
+        
+        res=(Dotprod(N_DOF,v[0],v[0]));    
+        res=res0=reslast=sqrt(res);     
+          
+                                    /* norm of residual */
+        beta=res;
+
+    // =============== END OF COMPUTE BETA 
+
+        maxite = maxit; // CONTROL PARAMETER
+
+        // ===========	CHECK IF SOLUTION IS OBTAINED ARLEADY
+        
+        if (beta <= res_norm_min ){
+          if ((minit==0)||(beta<1e-20)){
+            if (verbose>0)
+              OutPut("(no) fgmres iteration " << 0 << " " << beta << endl);
+            end_residual=res;
+            return(0);
+          }
+          else
+            maxite = minit;      // IF RESIDAUL IS REACHED AS PER GMRES DO ATLEAST MINIMUM ITERATIONS
+        }
+        
+        // ===============		GMRES ITERATION STARTS	======================================
+        //========================================================================================
+        //====================================================================================================
+        
+        if (verbose>0
+    #ifdef _MPI
+        && rank==0
+    #endif
+        )
+          OutPut("fgmres Iteration " << 0 << " " << beta << endl);
+
+        j=1;
+        // iterate
+        while (j<=maxite)
+        {
+          Dscal(N_DOF, 1.0/beta, v[0]); // v = r/beta
+          memset(s,0,(restart+1)*SizeOfDouble);
+          s[0]=beta; // store before a restart
+
+    // =================  iterate until converged or restart
+          for(i=0; i<restart && j<=maxite; i++, j++){
+      
+            if (prec==NULL)
+              memcpy(zv[i],v[i],N_DOF*SizeOfDouble); // if no preconditioner then M = I (identity matrix)
+            
+            
+    // --------THIS IS TO OBTAIN THE PRECONDITIONED RESIDUAL AND THE SOLUTION---------------------------------------        
+            
+            else
+      { 
+            
+            memset(zv[i],0,N_DOF*SizeOfDouble);
+        
+    // 	      if (prec_maxit>1)
+    // 		dnorm0 = sqrt(Ddot(N_DOF,v[i],v[i]))*TDatabase::ParamDB->SC_AMG_PREC_RED_FACTOR;
+            
+            for (k=0;k<prec_maxit;k++)
+            {								
+      
+        
+            #ifdef _MPI
+            TDatabase::ParamDB->time_GMRES_end = MPI_Wtime();
+            #else
+            TDatabase::ParamDB->time_GMRES_end = GetTime();
+            #endif
+
+            TDatabase::ParamDB->time_GMRES += TDatabase::ParamDB->time_GMRES_end - TDatabase::ParamDB->time_GMRES_start; 
+            
+                  prec->IterateGPU(sqmat, mat, zv[i], v[i], j); // Send the updated zv into the routine	  
+        
+        
+            #ifdef _MPI
+            TDatabase::ParamDB->time_GMRES_start = MPI_Wtime();
+            #else
+            TDatabase::ParamDB->time_GMRES_start = GetTime();
+            #endif
+              
+          if (k<prec_maxit-1)
+          {
+        
+        
+                  matvecdefect(sqmat, mat, zv[i], v[i], defect); // ------- CHECK IF THE RESIUDAL HAS DECREASED THE REQUIRED AMOUNT
+
+                  res=(Dotprod(N_DOF,defect,defect));    
+                  res=res0=reslast=sqrt(res);                   
+      
+        
+    //===================================DEBUG MESSAGES =================================
+    //=========================					===========================
+
+    cout << "==========	After "<< k+1 <<" multigrid sweep "<< res <<"	==================="<< endl; 	      
+          
+    //               if (res <= dnorm0)
+    //                 break;
+            }
+          }
+            }
+
+    // --------	END OF PRECONDITIONING ---------------------------------------        
+                                    
+            // ------------ GET THE W VECTOR
+            matvec(sqmat, mat, zv[i], defect); // send back an updated defect
+      update(defect);
+            // -------- NO NEED OF COMM UPDATE AS ZV IS ALREADY UPDATED ACROSS	
+    
+    // --------- COMPUTE THE ENTRIES OF THE HESSENBERG MATRIX
+      
+            for(k=0; k<=i; k++)
+      { 
+        
+              H[k][i]= Dotprod(N_DOF, defect,v[k]);    
+        Daxpy(N_DOF, -H[k][i], v[k], defect); // ------ COMPUTE NEW W VECTOR
+        // defect and v[k] already updated so need of further communication
+      }
+      
+      
+    // --------- END OF COMPUTE THE ENTRIES OF THE HESSENBERG MATRIX
+
+
+    // --------------- COMPUTE THE NORM OF - W VECTOR FOR H_i+1_i
+
+            H[i+1][i]=sqrt(Dotprod(N_DOF,defect,defect));
+              
+            Dcopy(N_DOF, defect, v[i+1]); 
+      
+            if(H[i+1][i]!=0)
+              Dscal(N_DOF, 1/H[i+1][i], v[i+1]);
+      // ------------------- obtain new value of V
+            
+      else
+      {
+              Error("Fehler!" << endl);
+              OutPut("Fehler in here actually FgmresIte.C !!!" << endl);
+            }
+
+    // --------------- COMPUTE THE NORM OF - W VECTOR FOR H_i+1_i
+
+
+
+    // ========================================================================================
+    // =================== OBTAINED H MATRIX, BETA. SAME ACROSS ALL PROCESSES
+    // ================================ COMPUTE Y VECTOR TO UPDATE SOLUTION
+    // ======================================
+
+
+            for(k=0;k<i;k++)
+              ApplyPlaneRotation(&H[k][i], &H[k+1][i], cosi[k], sn[k]);
+
+            GeneratePlaneRotation(H[i][i], H[i+1][i], &cosi[i], &sn[i]);
+            ApplyPlaneRotation(&H[i][i], &H[i+1][i], cosi[i], sn[i]);
+            ApplyPlaneRotation(&s[i], &s[i+1], cosi[i], sn[i]);
+
+            residlast=res;  // --------------- CHECK WHY IS THIS RESIDUAL BEING CHECKED UPON?
+
+    // ========= START OF STOPPING CRITERIA
+        // ========= ROUTINE TERMINATES IF WE GET INTO THIS LOOP
+      
+            if ((j >= minit) && ((((res=fabs(s[i+1])) < res_norm_min)|| ((res=fabs(s[i+1]))<red_factor*res0)))){
+              
+        memset(defect,0,N_DOF*SizeOfDouble);
+              
+        UpdateGmresIterate(defect /* The w vector*/, 
+              N_DOF, 
+              i/*to mention limit of acess to H*/,
+              H /*the hessenberg matrix*/, 
+              s /*beta value*/, 
+              zv/*Required to compute final solution update*/);
+                                    /* new iterate */
+              
+        Daxpy(N_DOF,1.0,defect,sol); // Defect = ZmYm in previous step,
+              // Add sol = sol + update
+              // COMMUPDATE REQURIED? 
+              
+        // ======= SOLUTION IS UPDATED HERE
+        
+        t2 = GetTime();
+              if (verbose>=1
+    #ifdef _MPI
+              && rank==0
+    #endif
+              ){
+                OutPut("FGMRES ITE: " << setw(4) << j);
+                OutPut(" t: " << setw(6) << t2-t1);
+                OutPut(" t/cyc: " << setw(6) << (t2-t1)/j);
+                OutPut(" res : "  << setw(8) << res);
+                OutPut(" rate: " << pow(res/res0,1.0/j) << endl);
+              }
+              if (verbose==-2
+    #ifdef _MPI
+                && rank==0
+    #endif
+              )
+              {
+                OutPut("vanka fgmres ite: " << setw(4) << j);
+                OutPut(" t: " << setw(6) << t2-t1);
+                OutPut(" t/cyc: " << setw(6) << (t2-t1)/j);
+                OutPut(" res : "  << setw(8) << res);
+                OutPut(" rate: " << pow(res/res0,1.0/j) << endl);
+
+              }
+            
+        
+    #ifdef _MPI
+      TDatabase::ParamDB->time_GMRES_end = MPI_Wtime();
+    #else
+      TDatabase::ParamDB->time_GMRES_end = GetTime();
+    #endif
+
+    TDatabase::ParamDB->time_GMRES += TDatabase::ParamDB->time_GMRES_end - TDatabase::ParamDB->time_GMRES_start; 
+
+    #ifdef _MPI
+  t2 = MPI_Wtime();
+#else
+  t2 = GetTime();  
+#endif 
+  tfgmres += t2-t1 ;
+
+    #ifdef _MPI
+  // cout<<"rank"<<rank<<endl;
+          if(rank==0)
+          {
+#endif
+          
+            OutPut("FGMRES ITE: " << setw(4) << j <<endl);
+            // OutPut(" t: " << setw(6) << t2-t1);
+            // OutPut(" t/cyc: " << setw(6) << (t2-t1)/j);
+            OutPut(" t (total time taken for FGMRES) : " << setw(6) << tfgmres <<endl);
+            OutPut(" res : "  << setw(8) << res <<endl);
+            OutPut(" rate: " << pow(res/res0,1.0/j) << endl);
+            OutPut(" tSmoother: " << setw(6) << tSmoother3 <<endl);
+            OutPut(" tCyc (time taken for all MG cycles in FGMRES) : " << setw(6) << TDatabase::ParamDB->time_MG <<endl);
+            OutPut(" tP (Prolongation): " << setw(6) << tP <<endl);
+            OutPut(" tR (Restriction) : " << setw(6) << tR<<endl);
+#ifdef _MPI
+          }
+#endif
+
+          return(j); // RETURN THE NUMBER OF ITERATIONS THAT TOOK PLACE
+        
+            }
+            
+    // ======================== END OF STOPPING CRITERIA CASE                        
+            // ===================== SOME CHECKS WRT RESIDUAL =============== 
+            
+            if (verbose>0 //&& //j%5==0
+    #ifdef _MPI
+              && rank==0
+    #endif
+            ){
+              OutPut("fgmres iteration " << j << " " << res << " " << res/residlast);
+              OutPut(endl);
+            }
+            
+            if (res>div_factor*res0){
+              OutPut("fgmres iteration diverges !!!" << endl);
+              exit(4711);
+            }
+
+          }                            /* endfor i */
+
+    // =============================== CALCULATED UNTIL J = RESTART
+    // ========================= EVALUATE NEW SOL. , UPDATE V , BETA TO RESTART THE ROUTINE
+
+          memset(v[0],0, N_DOF*SizeOfDouble);
+          UpdateGmresIterate(v[0], N_DOF, restart-1, H, s, zv);
+          
+          Daxpy(N_DOF,1.0,v[0],sol);   
+
+          // ============= SOL. IS UPDATED HERE
+          // ------------- REUQIRE COMM UPDATE ?
+          
+          matvecdefect(sqmat, mat, sol, rhs, v[0]); // recieve an updated v[0]
+          update(v[0]);
+          
+          // ========== UPDATED V FOR NEXT ITERATION
+          
+    // --------------------- UPDATE BETA FOR NEXT ITERATION
+          
+          res=(Dotprod(N_DOF,v[0],v[0]));    
+          res=res0=reslast=sqrt(res);     
+        
+          beta=res;
+
+    // ===================== BETA UPDATED FOR NEXT ITERATION 
+
+          // -------- IS THIS CHECK REQUIRED ?
+          if (verbose>1){
+            if(fabs(beta-res)>0.01*beta){
+              OutPut("WARNING: restart residual changed " <<  beta << " " << res);
+              OutPut(endl);
+            }
+          }
+          
+        } 
+    // =========================== COMPLETED WHILE - ITERATIONS :: GMRES HAS TRIED ITS BEST
+        
+        t2 = GetTime();
+    
+        // ============= OUTPUTS BASED ON THE RESIDUAL DETERMINED ===================
+        
+        if (j>=maxite && res>res_norm_min &&res>res0*red_factor ){
+          if (verbose>-1)
+            OutPut("FGMRES not converged !!!" << endl);
+        }
+
+        if (j>maxite)
+          j=maxite;
+        
+        if (verbose>-1){
+          OutPut("FGMRES ITE: " << setw(4) << j);
+          OutPut(" t: " << setw(6) << t2-t1);
+          OutPut(" t/cyc: " << setw(6) << (t2-t1)/j);
+          OutPut(" res : "  << setw(8) << res);
+          OutPut(" rate: " << pow(res/res0,1.0/j) << endl);
+        }
+        if (verbose==-2){
+          OutPut("vanka fgmres ite: " << setw(4) << j);
+          OutPut(" t: " << setw(6) << t2-t1);
+          OutPut(" t/cyc: " << setw(6) << (t2-t1)/j);
+          OutPut(" res : "  << setw(8) << res);
+          OutPut(" rate: " << pow(res/res0,1.0/j) << endl);
+        }
+        
+        
+        // ===============		GMRES ITERATION ENDS	======================================
+        //========================================================================================
+        //====================================================================================================
+
+        
+    #ifdef _MPI
+      TDatabase::ParamDB->time_GMRES_end = MPI_Wtime();
+    #else
+      TDatabase::ParamDB->time_GMRES_end = GetTime();
+    #endif
+
+    TDatabase::ParamDB->time_GMRES += TDatabase::ParamDB->time_GMRES_end - TDatabase::ParamDB->time_GMRES_start; 
+
+    #ifdef _MPI
+  t2 = MPI_Wtime();
+#else
+  t2 = GetTime();  
+#endif 
+  tfgmres += t2-t1 ;
+
+    #ifdef _MPI
+  // cout<<"rank"<<rank<<endl;
+          if(rank==0)
+          {
+#endif
+          
+            OutPut("FGMRES ITE: " << setw(4) << j <<endl);
+            // OutPut(" t: " << setw(6) << t2-t1);
+            // OutPut(" t/cyc: " << setw(6) << (t2-t1)/j);
+            OutPut(" t (total time taken for FGMRES) : " << setw(6) << tfgmres <<endl);
+            OutPut(" res : "  << setw(8) << res <<endl);
+            OutPut(" rate: " << pow(res/res0,1.0/j) << endl);
+            OutPut(" tSmoother: " << setw(6) << tSmoother3 <<endl);
+            OutPut(" tCyc (time taken for all MG cycles in FGMRES) : " << setw(6) << TDatabase::ParamDB->time_MG <<endl);
+            OutPut(" tP (Prolongation): " << setw(6) << tP <<endl);
+            OutPut(" tR (Restriction) : " << setw(6) << tR<<endl);
+#ifdef _MPI
+          }
+#endif
+    
+            return(j);
+        // =============================== END BY RETURNING THE NUMBER OF ITERATIONS =============== 
+      }
+      
+    // ============================  END OF FLEXIBLE ROUTINE =================================
+
+
+      else
+      {
+        double *r = new double[N_DOF];
+        if (verbose>1)
+          OutPut("Entering GMRES" <<endl);
+        
+        Dcopy(N_DOF, rhs, r); // IS THIS REQUIRED ??
+
+        // ======= GET RESIDUAL IN r
+        
+        matvecdefect(sqmat, mat, sol, rhs, r);
+
+        // ======= EVALUATE BETA
+        beta=sqrt(Ddot(N_DOF, r,r));
+
+        // =========== CONTROL CHECKS - CHECK IF RESIDUAL ALREADY REACHED AND PERFORM MINIMUM ITERATIONS
+        double resid = beta;
+        double start_residual=resid;
+        if ((beta  <= res_norm_min )&&(minit==0)){
+          if (verbose>0){
+            OutPut("GMRES Iteration 0 " << beta << endl);
+            end_residual=resid;
+          }
+          return(0);
+        }
+        
+        if (verbose>0)
+          OutPut("GMRES Iteration 0 " << beta << endl);
+        if (verbose>1)
+          OutPut("Entering GMRES iteration cycle" << endl);
+
+        
+        //===================================	GMRES LOOP BEGINS	====================================//
+        //========================================================================================================
+        //=========================================================================================================
+        
+      
+        
+        
+        j=1;
+        while (j<=maxit)
+        {
+    
+          // ============= CALCULATE V[0]
+          Dcopy(N_DOF, r, v[0]);
+          Dscal(N_DOF, 1.0/beta, v[0]);      
+          
+          memset(s,0,(restart+1)*SizeOfDouble);
+          s[0]=beta;
+          
+          for (i=0;i<restart && j<=maxit;i++, j++){
+            
+      // ========= IF NO PRE-COONDITIONER THEN EVALUTE A*V[i]
+      if (prec==NULL)
+              matvec(sqmat, mat, v[i], defect);  //
+            
+      // =============== GET THE UPDATED PRE-CONDITIONED RESIDUAL INTO r  
+      else{
+              Dcopy(N_DOF, v[i], zv[0]);
+              memset(r,0.0,N_DOF*SizeOfDouble);
+        
+              for (k=0;k<prec_maxit;k++){
+                prec->Iterate(sqmat, mat, r, v[i]);		// ======== GET Z into r
+              }                    
+              matvec(sqmat, mat, r, defect);	// =========== EVALUATE W VECTOR INTO defect
+            }
+            
+            // ==============	GET ENTRIES INTO H-MATRIX, UPDATE DEFECT
+            for(k=0; k<=i; k++){
+              H[k][i]=Ddot(N_DOF, defect, v[k]);
+              Daxpy(N_DOF, -H[k][i], v[k], defect);
+            }
+                    
+            H[i+1][i]=sqrt(Ddot(N_DOF, defect,defect)); // =========	H_i+1_i
+      
+            Dcopy(N_DOF, defect, v[i+1]); 
+            Dscal(N_DOF, 1.0/H[i+1][i], v[i+1]);
+            // ============ 	UPDATE V FOR NEXT ITERATION
+      
+      for(k=0;k<i;k++)	
+              ApplyPlaneRotation(&H[k][i], &H[k+1][i], cosi[k], sn[k]);		
+            GeneratePlaneRotation(H[i][i], H[i+1][i], &cosi[i], &sn[i]);
+            ApplyPlaneRotation(&H[i][i], &H[i+1][i], cosi[i], sn[i]);
+            ApplyPlaneRotation(&s[i], &s[i+1], cosi[i], sn[i]);
+            
+      residlast=resid;
+      
+    // ========= START OF STOPPING CRITERIA
+        // ========= ROUTINE TERMINATES IF WE GET INTO THIS LOOP
+      
+            if (((resid=fabs(s[i+1])) < res_norm_min) || ((resid=fabs(s[i+1]))<red_factor*start_residual)){
+        
+              memset(zv[0],0,((restart+1)*N_DOF)*SizeOfDouble);
+        
+              UpdateGmresIterate(zv[0],N_DOF, i, H, s, v);
+        
+        // ===========	GET UPDATE INTO ZV[0]
+              
+        if (prec==NULL) // ===============	IF NO PRE-CONDITIONER THEN PROCEED
+                Daxpy(N_DOF, 1.0, zv[0], sol);
+        
+              else{		// ==================		NOT SURE ??
+                memset(r,0.0,N_DOF*SizeOfDouble);
+                for (k=0;k<prec_maxit;k++)
+                  prec->Iterate(sqmat, mat, r, zv[0]);
+                
+                Daxpy(N_DOF, 1.0, r, sol);            /* new iterate */
+              }
+              
+              if (verbose>0)
+                OutPut("GMRES (right) : iterations " << j << " residual " <<resid << endl);
+              end_residual=resid;
+
+              return(j);
+            }
+            
+      // ========= END OF STOPPING CRITERIA      
+            
+            if (verbose>0)
+              OutPut("GMRES (right) Iteration " << j << " residuum " << resid << " " << resid/residlast << endl);
+      
+            if (resid>div_factor*start_residual){
+              OutPut("GMRES (right) iteration diverges !!!" << endl);
+              exit(4711);
+            }
+    
+          }      // ============================	END OF GMRES RESTART LOOP
+          
+          memset(zv[0],0,N_DOF*SizeOfDouble); // =============	RESET ZV
+
+          
+          
+          UpdateGmresIterate(zv[0], N_DOF, restart-1, H, s, v);
+          
+          if (prec==NULL)      
+            Dcopy(N_DOF, zv[0],r);
+
+          else{
+            memset(r,0,N_DOF*SizeOfDouble);
+            for (l=0;l<prec_maxit;l++)        
+              prec->Iterate(sqmat, mat, r, zv[0]);
+          }
+          
+          Daxpy(N_DOF, 1.0, r, sol);	
+          // ============================	SOLUTION IS UPDATED HERE
+          
+          // ============================================	UPDATE RESIDUAL, V -, BETA FOR START OF NEXT GMRES 
+          
+          Dcopy(N_DOF,rhs,r);                         /* copy rhs (b) into r */
+          
+          
+          matvecdefect(sqmat, mat, sol, rhs, r);
+          beta=sqrt(Ddot(N_DOF, r, r));               /* norm of residual */
+
+          if (verbose>1){
+            if(fabs(beta-resid)>0.01*beta)
+              OutPut("restart residual changed " << beta << " " << resid << endl);
+          }
+        }
+        
+          //===================================	GMRES LOOP ENDS	====================================//
+        //========================================================================================================
+        //=========================================================================================================
+
+        if (verbose>0){
+          OutPut("GMRES (right) : (maximal) iterations " << maxit << " residual " << resid << endl);
+        }
+        end_residual=resid;
+            
+        return(j);
+      }
+
+  }
+  #endif

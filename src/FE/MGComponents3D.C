@@ -19,6 +19,8 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include<algorithm>
+#include <omp.h>
 
 #ifdef __3D__
 
@@ -233,15 +235,17 @@ void Prolongate(TFESpace3D *CoarseSpace,
   memset(aux, 0, SizeOfDouble*N_FineDOFs);
   memset(FineFunction, 0, SizeOfDouble*N_FineDOFs);
 
-#ifdef _HYBRID
-#pragma omp parallel default(shared) private(i,j,k,l,cell,DOF,FineId,FineElement,FineBF,N_Fine, \
-                                             parent, N_Children, CoarseNumber, CoarseId, CoarseElement, \
-                                             CoarseBF, BaseFunctions, Ref, FineNumber,\
-                                             QQ, FineDOF, CoarseDOF, Val, s, Val2, \
-                                             Index, N_Coarse, entry)
-{
-#pragma omp for schedule(guided) 
-#endif
+  omp_set_num_threads(TDatabase::ParamDB->OMPNUMTHREADS);
+
+// #ifdef _HYBRID
+// #pragma omp parallel default(shared) private(i,j,k,l,cell,DOF,FineId,FineElement,FineBF,N_Fine, \
+//                                              parent, N_Children, CoarseNumber, CoarseId, CoarseElement, \
+//                                              CoarseBF, BaseFunctions, Ref, FineNumber,\
+//                                              QQ, FineDOF, CoarseDOF, Val, s, Val2, \
+//                                              Index, N_Coarse, entry)
+// {
+// #pragma omp for schedule(guided) 
+// #endif
   // set fine grid clipboard to -1
   for(i=0;i<N_FineCells;i++)
   {
@@ -254,15 +258,15 @@ void Prolongate(TFESpace3D *CoarseSpace,
     FineBF = FineElement->GetBaseFunct3D_ID();
     N_Fine = TFEDatabase3D::GetBaseFunct3D(FineBF)->GetDimension();
     for(j=0;j<N_Fine;j++)
-#ifdef _HYBRID      
-      #pragma omp atomic 
-#endif  
+// #ifdef _HYBRID      
+//       #pragma omp atomic 
+// #endif  
       aux[DOF[j]] += 1;
   }
   
-#ifdef _HYBRID
-#pragma omp for schedule(guided) 
-#endif
+// #ifdef _HYBRID
+// #pragma omp for schedule(guided) 
+// #endif
   // set coarse grid clipboard to implicit number
   for(i=0;i<N_CoarseCells;i++){
     cell = CoarseColl->GetCell(i);
@@ -270,9 +274,9 @@ void Prolongate(TFESpace3D *CoarseSpace,
   }
 
 
-#ifdef _HYBRID
-#pragma omp for schedule(guided)
-#endif
+// #ifdef _HYBRID
+// #pragma omp for schedule(guided)
+// #endif
   // if a cell with clipboard==-1 is found
   // => this cell is only on the fine grid
   // set clipboard to "-number-10"
@@ -283,9 +287,9 @@ void Prolongate(TFESpace3D *CoarseSpace,
     if(k==-1) cell->SetClipBoard(-i-10);
   }
   
-#ifdef _HYBRID
-#pragma omp for schedule(guided)
-#endif
+// #ifdef _HYBRID
+// #pragma omp for schedule(guided)
+// #endif
   for(i=0;i<N_FineCells;i++)
   {
     cell = FineColl->GetCell(i);
@@ -342,13 +346,13 @@ void Prolongate(TFESpace3D *CoarseSpace,
         FineBF = FineElement->GetBaseFunct3D_ID();
         N_Fine = TFEDatabase3D::GetBaseFunct3D(FineBF)->GetDimension();
 
-#ifdef _HYBRID
-       #pragma omp critical
-#endif
-	{
+// #ifdef _HYBRID
+//        #pragma omp critical
+// #endif
+// 	{
 	  QQ = TFEDatabase3D::GetProlongationMatrix3D 
                 (CoarseId, Ref, FineId, j);
-	}
+	// }
 
         FineDOF = FineGlobalNumbers+FineBeginIndex[FineNumber];
 
@@ -372,9 +376,9 @@ void Prolongate(TFESpace3D *CoarseSpace,
         {
           Index = FineDOF[k];
 	 {
-#ifdef _HYBRID
-       #pragma omp atomic
-#endif  
+// #ifdef _HYBRID
+//        #pragma omp atomic
+// #endif  
           FineFunction[Index] += Val2[k];
 	 }
         }
@@ -399,13 +403,13 @@ void Prolongate(TFESpace3D *CoarseSpace,
       BaseFunctions = TFEDatabase3D::GetBaseFunct3D(CoarseBF);
       N_Coarse = BaseFunctions->GetDimension();
 
-#ifdef _HYBRID
-       #pragma omp critical
-#endif
-	{
+// #ifdef _HYBRID
+//        #pragma omp critical
+// #endif
+	// {
 	  QQ = TFEDatabase3D::GetProlongationMatrix3D 
               (CoarseId, Ref, FineId, 0);
-	}
+	// }
 
       FineDOF = FineGlobalNumbers+FineBeginIndex[FineNumber];
       CoarseDOF = CoarseGlobalNumbers+CoarseBeginIndex[CoarseNumber];
@@ -432,26 +436,26 @@ void Prolongate(TFESpace3D *CoarseSpace,
       {
         Index = FineDOF[k];
 	{
-#ifdef _HYBRID
-       #pragma omp atomic
-#endif  
+// #ifdef _HYBRID
+//        #pragma omp atomic
+// #endif  
          FineFunction[Index] += Val2[k];
 	}
       }
     } // endelse
   } // endfor i
 
-#ifdef _HYBRID
-#pragma omp for schedule(guided)
-#endif 
+// #ifdef _HYBRID
+// #pragma omp for schedule(guided)
+// #endif 
   for(i=0;i<N_FineDOFs;i++)
   {
     if(aux[i])
     FineFunction[i] /= aux[i];
   }
-#ifdef _HYBRID
-} 
-#endif
+// #ifdef _HYBRID
+// } 
+// #endif
 
 #ifdef _MPI
   t2 = MPI_Wtime();
@@ -595,7 +599,8 @@ void Prolongate(TFESpace3D *CoarseSpace, TFESpace3D *FineSpace,
         {
           CoarseOffset = IFunct*N_CoarseDOFs;
           FineOffset = IFunct*N_FineDOFs;
-
+         
+          #pragma omp parallel for simd
           for(l=0;l<N_Coarse;l++)
             Val[l] = CoarseFunction[CoarseOffset+CoarseDOF[l]];
 
@@ -754,18 +759,18 @@ void DefectRestriction(TFESpace3D *CoarseSpace,
   memset(aux, 0, SizeOfDouble*N_FineDOFs);
   memset(CoarseFunction, 0, SizeOfDouble*N_CoarseDOFs);
   
+  omp_set_num_threads(TDatabase::ParamDB->OMPNUMTHREADS);
   
   
-  
-#ifdef _HYBRID
-#pragma omp parallel default(shared) private(i,j,k,l,cell,DOF,FineId,FineElement,FineBF,N_Fine, \
-                                             parent, N_Children, CoarseNumber, CoarseId, CoarseElement, \
-                                             CoarseBF, BaseFunctions, Ref, FineNumber,\
-                                             QQ, FineDOF, CoarseDOF, Val, s, Val2, \
-                                             Index, N_Coarse)
-{
-#pragma omp for schedule(guided) 
-#endif
+// #ifdef _HYBRID
+// #pragma omp parallel default(shared) private(i,j,k,l,cell,DOF,FineId,FineElement,FineBF,N_Fine, \
+//                                              parent, N_Children, CoarseNumber, CoarseId, CoarseElement, \
+//                                              CoarseBF, BaseFunctions, Ref, FineNumber,\
+//                                              QQ, FineDOF, CoarseDOF, Val, s, Val2,\
+//                                              Index, N_Coarse)
+// {
+// #pragma omp for schedule(guided) 
+// #endif
 //   set fine grid clipboard to -1
   for(i=0;i<N_FineCells;i++)
   {
@@ -778,24 +783,24 @@ void DefectRestriction(TFESpace3D *CoarseSpace,
     FineBF = FineElement->GetBaseFunct3D_ID();
     N_Fine = TFEDatabase3D::GetBaseFunct3D(FineBF)->GetDimension();
     for(j=0;j<N_Fine;j++)
-#ifdef _HYBRID      
-      #pragma omp atomic 
-#endif      
+// #ifdef _HYBRID      
+//       #pragma omp atomic 
+// #endif      
       aux[DOF[j]] += 1;
   }
 
-#ifdef _HYBRID
-#pragma omp for schedule(guided) nowait 
-#endif
+// #ifdef _HYBRID
+// #pragma omp for simd nowait 
+// #endif
   // modify fine function values, will be repaired at end
   for(i=0;i<N_FineDOFs;i++)
   {    
     FineFunction[i] /= aux[i];
   }
    
-#ifdef _HYBRID
-#pragma omp for schedule(guided)
-#endif
+// #ifdef _HYBRID
+// #pragma omp for schedule(guided)
+// #endif
   // set coarse grid clipboard to implicit number
   for(i=0;i<N_CoarseCells;i++)
   {
@@ -803,9 +808,9 @@ void DefectRestriction(TFESpace3D *CoarseSpace,
     cell->SetClipBoard(i);
   }
 
-#ifdef _HYBRID
-#pragma omp for schedule(guided)
-#endif
+// #ifdef _HYBRID
+// #pragma omp for schedule(guided)
+// #endif
   // if a cell with clipboard==-1 is found
   // => this cell is only on the fine grid
   // set clipboard to "-number-10"
@@ -816,9 +821,9 @@ void DefectRestriction(TFESpace3D *CoarseSpace,
     if(k==-1) cell->SetClipBoard(-i-10);
   }
 
-#ifdef _HYBRID
-#pragma omp for schedule(guided)
-#endif
+// #ifdef _HYBRID
+// #pragma omp for schedule(guided)
+// #endif
   for(i=0;i<N_FineCells;i++)
   {
     cell = FineColl->GetCell(i);
@@ -867,13 +872,13 @@ void DefectRestriction(TFESpace3D *CoarseSpace,
         FineElement = TFEDatabase3D::GetFE3D(FineId);
         FineBF = FineElement->GetBaseFunct3D_ID();
         N_Fine = TFEDatabase3D::GetBaseFunct3D(FineBF)->GetDimension();
-#ifdef _HYBRID
-       #pragma omp critical
-#endif
-	{
+// #ifdef _HYBRID
+//        #pragma omp critical
+// #endif
+	// {
 	  QQ = TFEDatabase3D::GetProlongationMatrix3D 
                 (CoarseId, Ref, FineId, j);
-	}
+	// }
 
         FineDOF = FineGlobalNumbers+FineBeginIndex[FineNumber];
         CoarseDOF = CoarseGlobalNumbers+CoarseBeginIndex[CoarseNumber];
@@ -884,6 +889,7 @@ void DefectRestriction(TFESpace3D *CoarseSpace,
         TFEDatabase3D::GetBaseFunct3D(FineBF)
                           ->ChangeBF(FineColl, cell, Val);
 
+        
         for(k=0;k<N_Coarse;k++)
         {
           s = 0;
@@ -900,9 +906,9 @@ void DefectRestriction(TFESpace3D *CoarseSpace,
         for(k=0;k<N_Coarse;k++)
         {
           Index = CoarseDOF[k];
-#ifdef _HYBRID
-       #pragma omp atomic
-#endif
+// #ifdef _HYBRID
+//        #pragma omp atomic
+// #endif
            CoarseFunction[Index] += Val2[k];
         }
       } // endfor j
@@ -925,13 +931,13 @@ void DefectRestriction(TFESpace3D *CoarseSpace,
       N_Coarse = BaseFunctions->GetDimension();
 
       Ref = NoRef;
-#ifdef _HYBRID
-       #pragma omp critical
-#endif
-	{
+// #ifdef _HYBRID
+//        #pragma omp critical
+// #endif
+// 	{
 	  QQ = TFEDatabase3D::GetProlongationMatrix3D 
               (CoarseId, Ref, FineId, 0);
-	}
+	// }
 
       FineDOF = FineGlobalNumbers+FineBeginIndex[FineNumber];
       CoarseDOF = CoarseGlobalNumbers+CoarseBeginIndex[CoarseNumber];
@@ -957,25 +963,25 @@ void DefectRestriction(TFESpace3D *CoarseSpace,
 
       for(k=0;k<N_Coarse;k++)
       {
-#ifdef _HYBRID
-       #pragma omp atomic
-#endif
+// #ifdef _HYBRID
+//        #pragma omp atomic
+// #endif
 	CoarseFunction[CoarseDOF[k]] += Val2[k];
       }
     } // endelse
   } // endfor i
 
   // repair fine function values since they are modified at beginning
-#ifdef _HYBRID
-#pragma omp for schedule(guided)
-#endif  
+// #ifdef _HYBRID
+// #pragma omp for simd
+// #endif  
   for(i=0;i<N_FineDOFs;i++)
   {
     FineFunction[i] *= aux[i];
   }
-#ifdef _HYBRID
-} 
-#endif
+// #ifdef _HYBRID
+// } 
+// #endif
   
 #ifdef _MPI
   t2 = MPI_Wtime();
@@ -3096,15 +3102,18 @@ void CoupledDefect(TSquareMatrix *A11, TSquareMatrix *A12, TSquareMatrix *A13,
   r3 = r2+N_UDOF;
   r4 = r3+N_UDOF;
 
-  j = ARowPtr[0];
+  omp_set_num_threads(TDatabase::ParamDB->OMPNUMTHREADS);
 
+  #pragma omp parallel private(i,j,s,t,u,k,index, value, value1,value2,value3,value4,value5,value6,value7, value8, value9, value10, value11)
+  {
+  #pragma omp for
   for(i=0;i<N_Active;i++)
   {
     s = v1[i];
     t = v2[i];
     u = v3[i];
     k = ARowPtr[i+1];
-    for(;j<k;j++)
+    for(j = ARowPtr[i];j<k;j++)
     {
       index = AKCol[j];
       value = A11Entries[j];
@@ -3128,14 +3137,16 @@ void CoupledDefect(TSquareMatrix *A11, TSquareMatrix *A12, TSquareMatrix *A13,
     r3[i] = u;
   } // endfor i
 
-  j = ARowPtr[N_Active];
+  
+
+  #pragma omp for
   for(i=N_Active;i<N_UDOF;i++)
   {
     s = v1[i];
     t = v2[i];
     u = v3[i];
     k = ARowPtr[i+1];
-    for(;j<k;j++)
+    for(j = ARowPtr[i];j<k;j++)
     {
       index = AKCol[j];
       value = A11Entries[j];
@@ -3150,12 +3161,14 @@ void CoupledDefect(TSquareMatrix *A11, TSquareMatrix *A12, TSquareMatrix *A13,
     r3[i] = u;
   } // endfor i
 
-  j = BRowPtr[0];
+  
+
+  #pragma omp for
   for(i=0;i<N_PDOF;i++)
   {
     s = q[i];
     k = BRowPtr[i+1];
-    for(;j<k;j++)
+    for(j = BRowPtr[i];j<k;j++)
     {
       index = BKCol[j];
       value1 = B1Entries[j];
@@ -3167,14 +3180,16 @@ void CoupledDefect(TSquareMatrix *A11, TSquareMatrix *A12, TSquareMatrix *A13,
     r4[i] = s;
   } // endfor i
 
-  j = BTRowPtr[0];
+  
+
+  #pragma omp for
   for(i=0;i<N_Active;i++)
   {
     s = 0;
     t = 0;
     u = 0;
     k = BTRowPtr[i+1];
-    for(;j<k;j++)
+    for(j = BTRowPtr[i];j<k;j++)
     {
       index = BTKCol[j];
       value1 = B1TEntries[j];
@@ -3189,6 +3204,8 @@ void CoupledDefect(TSquareMatrix *A11, TSquareMatrix *A12, TSquareMatrix *A13,
     r2[i] -= t;
     r3[i] -= u;
   } // endfor i
+
+  }
 }
 void Defect_NSE4(TSquareMatrix **A, TMatrix **B, double *x, double *b, double *r)
 {

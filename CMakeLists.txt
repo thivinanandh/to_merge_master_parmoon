@@ -27,13 +27,10 @@
 cmake_minimum_required (VERSION 2.8)
 set (CMAKE_C_COMPILER "/opt/intel/compilers_and_libraries/linux/bin/intel64/icc")
 set (CMAKE_CXX_COMPILER "/opt/intel/compilers_and_libraries/linux/bin/intel64/icpc")
-if("${AParMooN_PARALLEL_TYPE}" STREQUAL "SCUDA")
-  set (CMAKE_CUDA_COMPILER "/usr/local/cuda-10.2/bin/nvcc")
-  project (ParMooN LANGUAGES C CXX CUDA )
 
-else("${AParMooN_PARALLEL_TYPE}" STREQUAL "SCUDA")
-  project (ParMooN LANGUAGES C CXX )
-endif("${AParMooN_PARALLEL_TYPE}" STREQUAL "SCUDA")
+set (CMAKE_CUDA_COMPILER "/usr/local/cuda-10.2/bin/nvcc")
+project (ParMooN LANGUAGES C CXX CUDA )
+
 
 include(${CMAKE_SOURCE_DIR}/UserConfig.cmake)
 
@@ -63,6 +60,7 @@ set(CMAKE_INCLUDE_PATH ${CMAKE_INCLUDE_PATH} $ENV{HOME}/Software/include)
 set(PARMOON_EXTLIB_PATH ${PROJECT_SOURCE_DIR}/EXT_LIB)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
+
 
 if(NOT "${AParMooN_ARCH}" STREQUAL "CRAY64")
 # search the blas in the system, if available it will be default
@@ -98,7 +96,7 @@ message("==================Searching BLAS in the System - end===================
 message("BLAS_LIBRARIES  = ${BLAS_LIBRARIES}")
 
 
-if("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI")
+if("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "MCUDA")
 
 
 #   message("==================Searching MPI in the System - begin===================================================")
@@ -110,7 +108,7 @@ find_package(MPI)
       set(MPI_LIBS -lmpi -lmpifort -lmpicxx)
    elseif("${AParMooN_MPI_IMPLEMENTATION}" STREQUAL "INTELMPI")
       set(MPI_LIBS -lifcore)    
-       message("Available MPI_LIBS =${MPI_LIBS}")
+      message("Available MPI_LIBS =${MPI_LIBS}")
    elseif("${AParMooN_MPI_IMPLEMENTATION}" STREQUAL "MACMPI")
      set(MPI_LIBS -lmpich -lmpichf90 -lmpichcxx)             
    endif("${AParMooN_MPI_IMPLEMENTATION}" STREQUAL "MPICH")   
@@ -130,7 +128,7 @@ message(" MPI_LIBS " = ${MPI_LIBS})
  endif()
  message("==================Searching MUMPS in the System - end=======================================================")
 
-endif("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI")
+endif("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "MCUDA")
 
 endif(NOT "${AParMooN_ARCH}" STREQUAL "CRAY64")
 
@@ -147,6 +145,8 @@ if(CMAKE_VERBOSE_MAKEFILE)
 endif(CMAKE_VERBOSE_MAKEFILE)
 message("==================Searching UMFPACK in the System - end=====================================================")
 
+# message("UMFPACK_LIBRARIES  = ${UMFPACK_LIBRARIES}")
+
 # search the GRIDGEN in the system, if available it wil be default
 message("==================Searching GRIDGEN in the System - begin==================================================")
 find_package(GRIDGEN)
@@ -159,6 +159,10 @@ if(CMAKE_VERBOSE_MAKEFILE)
   endif()
 endif()
 message("==================Searching GRIDGEN in the System - end====================================================")
+
+
+# message("GRIDGEN_LIBRARIES  = ${GRIDGEN_LIBRARIES}")
+
 
 # search the TETGEN in the system, if available it wil be default
 if("${AParMooN_GEO}" STREQUAL "3D")
@@ -206,7 +210,7 @@ include (CMakeForceCompiler)
   
 if("${AParMooN_ARCH}" STREQUAL "MAC64")
 
-  if("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI")
+  if("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "MCUDA")
     find_path(MPI_CPATH   mpicc-mpich-mp)
     set(CMAKE_C_COMPILER ${MPI_CPATH}/mpicc-mpich-mp)
     find_path(MPI_CXXPATH   mpicxx-mpich-mp)  
@@ -216,11 +220,11 @@ if("${AParMooN_ARCH}" STREQUAL "MAC64")
     set(CMAKE_C_COMPILER ${CPATH}/clang  )
     find_path(CXXPATH clang++)  
     set(CMAKE_CXX_COMPILER ${CXXPATH}/clang++)  
-  endif("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI")
+  endif("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "MCUDA")
  
 elseif("${AParMooN_ARCH}" STREQUAL "LINUX64")
 
-  if("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI")
+  if("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "MCUDA")
     find_path(MPI_CPATH   mpicc)
     set(CMAKE_C_COMPILER ${MPI_CPATH}/mpicc)
     find_path(MPI_CXXPATH   mpicxx)  
@@ -230,11 +234,11 @@ elseif("${AParMooN_ARCH}" STREQUAL "LINUX64")
     set(CMAKE_C_COMPILER ${CPATH}/gcc)
     find_path(CXXPATH g++)  
     set(CMAKE_CXX_COMPILER ${CXXPATH}/g++)  
-  endif("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI")
+  endif("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "MCUDA")
   
 elseif("${AParMooN_ARCH}" STREQUAL "INTEL64")
 
-  if("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI")
+  if("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "MCUDA")
     find_path(MPI_CPATH   mpiicc)
     set(CMAKE_C_COMPILER ${MPI_CPATH}/mpiicc)
     find_path(MPI_CXXPATH   mpiicpc)  
@@ -247,7 +251,7 @@ elseif("${AParMooN_ARCH}" STREQUAL "INTEL64")
     set(CMAKE_C_COMPILER ${CPATH}/icc)
     find_path(CXXPATH icpc)  
     set(CMAKE_CXX_COMPILER ${CXXPATH}/icpc)  
-  endif("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI")  
+  endif("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "MCUDA")  
   
 # message("MPI_CXXPATH  = ${CXXPATH}")
 
@@ -264,12 +268,11 @@ endif()
 # set the define for compiler  options
   set(CMAKE_C_FLAGS "${PARMOON_C_DEF}")
   set(CMAKE_C_FLAGS_DEBUG "-g ${PARMOON_C_DEF}")
-  set(CMAKE_C_FLAGS_RELEASE " -s  ${PARMOON_C_DEF}")
+  set(CMAKE_C_FLAGS_RELEASE "O3 -s  ${PARMOON_C_DEF}")
   set(CMAKE_CXX_FLAGS "${PARMOON_CXX_DEF} " )
   set(CMAKE_CXX_FLAGS_DEBUG "${PARMOON_CXX_DEF} ")
-  set(CMAKE_CXX_FLAGS_RELEASE " -s ${PARMOON_CXX_DEF}") 
+  set(CMAKE_CXX_FLAGS_RELEASE "-O3 -s ${PARMOON_CXX_DEF}") 
   set(CMAKE_CUDA_FLAGS "${PARMOON_CUDA_DEF} " )
-  
  
 include_directories("${CMAKE_SOURCE_DIR}/include/General")
 include_directories("${CMAKE_SOURCE_DIR}/include/FE")
@@ -288,17 +291,21 @@ include_directories("${CMAKE_SOURCE_DIR}/Examples")
 if("${AParMooN_PARALLEL_TYPE}" STREQUAL "SCUDA" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "MCUDA" )
   include_directories("${CMAKE_SOURCE_DIR}/include/Solvers")
   include_directories("${CMAKE_SOURCE_DIR}/include/Solvers/cuda_general")
+  include_directories("${CMAKE_SOURCE_DIR}/EXT_LIB/Magma/include")
+  include_directories("${CMAKE_SOURCE_DIR}/EXT_LIB/Metis/Lib")
+  include_directories("/usr/local/cuda/include")
 endif("${AParMooN_PARALLEL_TYPE}" STREQUAL "SCUDA"  OR  "${AParMooN_PARALLEL_TYPE}" STREQUAL "MCUDA")
+
+
 
 
 add_subdirectory(src/AMG) 
 add_subdirectory(src/Refinement) 
 add_subdirectory(src/QuadFormulas)  
-
-add_subdirectory(src/Geometry)   
+add_subdirectory(src/Geometry)          
 add_subdirectory(src/General) 
 add_subdirectory(src/FE) 
-add_subdirectory(src/System)
+add_subdirectory(src/System) 
 
 if("${AParMooN_PARALLEL_TYPE}" STREQUAL "SCUDA" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "MCUDA" )
   add_subdirectory(src/Solvers)
@@ -312,26 +319,26 @@ endif("${AParMooN_PARALLEL_TYPE}" STREQUAL "SCUDA"  OR  "${AParMooN_PARALLEL_TYP
 message("CMAKE_SOURCE_DIR  = ${CMAKE_SOURCE_DIR}")
 
 
-if("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI")
+if("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "MCUDA")
    add_subdirectory(src/Parallel) 
-endif("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI")
+endif("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "MCUDA")
 
 add_executable(parmoon_${AParMooN_GEO}_${AParMooN_PARALLEL_TYPE}.exe  ${AParMooN_MODEL})
 
-if( "${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI" )
+if( "${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "MCUDA" )
    target_link_libraries(parmoon_${AParMooN_GEO}_${AParMooN_PARALLEL_TYPE}.exe "sys" "par" "geo"  "fe" "gen" "geo" "fe" "gen"  
                       "amg"  "quad" "ref" "geo" "fe" "quad" "geo"  ${UMFPACK_LIBRARIES} ${TECPLOT_LIBRARIES}
-                      ${MPIBLACS_LIBRARIES}  ${TETGEN_LIBRARIES} ${GRIDGEN_LIBRARIES}  ${MUMPS_LIBRARIES}   ${BLAS_LIBRARIES} ${MPI_LIBS})  
+                      ${MPIBLACS_LIBRARIES}  ${TETGEN_LIBRARIES} ${GRIDGEN_LIBRARIES}  ${MUMPS_LIBRARIES}   ${BLAS_LIBRARIES} ${MPI_LIBS} ${CMAKE_SOURCE_DIR}/EXT_LIB/Magma/lib/libmagma_sparse.a ${CMAKE_SOURCE_DIR}/EXT_LIB/Magma/lib/libmagma.a "-lnvToolsExt" "-lcusparse -lculibos -lcublas -lcusolver")  
 elseif( "${AParMooN_PARALLEL_TYPE}" STREQUAL "SEQUENTIAL"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "OMPONLY")
-   target_link_libraries(parmoon_${AParMooN_GEO}_${AParMooN_PARALLEL_TYPE}.exe "sys" "geo"  "fe" "gen" "geo" "fe" "gen" "fe"
-                      "amg"  "quad" "ref" "geo" "fe" "quad" "geo" "sys" "fe" "geo"  ${UMFPACK_LIBRARIES} ${TECPLOT_LIBRARIES}
-                      ${BLAS_LIBRARIES} ${TETGEN_LIBRARIES} ${GRIDGEN_LIBRARIES}   )
+   target_link_libraries(parmoon_${AParMooN_GEO}_${AParMooN_PARALLEL_TYPE}.exe "sys" "geo"  "fe" "gen" "geo" "fe" "gen"  
+                      "amg"  "quad" "ref" "geo" "fe" "quad" "geo"  ${UMFPACK_LIBRARIES} ${TECPLOT_LIBRARIES}
+                     ${BLAS_LIBRARIES} ${TETGEN_LIBRARIES} ${GRIDGEN_LIBRARIES} "-lnvToolsExt -lcusparse -lculibos -lcublas -lcusolver")
 
 elseif("${AParMooN_PARALLEL_TYPE}" STREQUAL "SCUDA")
 target_link_libraries(parmoon_${AParMooN_GEO}_${AParMooN_PARALLEL_TYPE}.exe "sys" "geo"  "fe" "gen" "geo" "fe" "gen" "fe"
                     "amg"  "quad" "ref" "geo" "fe" "quad" "geo" "sys" "fe" "geo" "cudaSpLinSolver" ${UMFPACK_LIBRARIES} ${TECPLOT_LIBRARIES}
-                    ${BLAS_LIBRARIES} ${TETGEN_LIBRARIES} ${GRIDGEN_LIBRARIES}  -lcusparse -lculibos -lcublas -lcusolver -lnvToolsExt  )
-endif("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI")
+                    ${BLAS_LIBRARIES} ${TETGEN_LIBRARIES} ${GRIDGEN_LIBRARIES}  -lcusparse -lculibos -lcublas -lcusolver -lnvToolsExt  )                     
+endif("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "MCUDA")
 
 message("============================================================================================================"  )  
 message("AParMooN_GEO=${AParMooN_GEO}")
@@ -349,7 +356,6 @@ message("         Dept. of Computational & Data Sciences")
 message("         Indian Institute of Science, Bangalore, India")  
 message("mailt0 : sashi-AT-iisc.ac.in") 
 message("============================================================================================================"  ) 
-
 
 
 

@@ -1,3 +1,29 @@
+/** ==========================================================================
+#    This file is part of the finite element software ParMooN.
+# 
+#    ParMooN (cmg.cds.iisc.ac.in/parmoon) is a free finite element software  
+#    developed by the research groups of Prof. Sashikumaar Ganesan (IISc, Bangalore),
+#    Prof. Volker John (WIAS Berlin) and Prof. Gunar Matthies (TU-Dresden):
+#
+#    ParMooN is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU Affero General Public License as
+#    published by the Free Software Foundation, either version 3 of the
+#    License, or (at your option) any later version.
+#
+#    ParMooN is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU Affero General Public License for more details.
+#
+#    You should have received a copy of the GNU Affero General Public License
+#    along with ParMooN.  If not, see <http://www.gnu.org/licenses/>.
+#
+#    If your company is selling a software using ParMooN, please consider 
+#    the option to obtain a commercial license for a fee. Please send 
+#    corresponding requests to sashi@iisc.ac.in
+
+# =========================================================================*/ 
+   
 // =======================================================================
 // @(#)ParFEMapper3D.h
 //
@@ -20,6 +46,9 @@
 #include <FESpace3D.h>
 #include <SquareStructure.h>
 #include <SquareStructure3D.h>
+#include <vector>
+
+using namespace std;
 
 class TParFEMapper3D
 {
@@ -73,6 +102,10 @@ class TParFEMapper3D
     int *NewGN, *Reorder, *Reorder_M, *Reorder_I, *Reorder_D1, *Reorder_D2, *Reorder_D3;
      
     int N_CMaster, N_CDept1, N_CDept2, N_CInt, *ptrCMaster, *ptrCDept1, *ptrCDept2, *ptrCInt;
+    
+    int N_CIntCell, *ptrCellColors, *CellReorder, maxCellsPerColor;
+    
+    int N_CPDOF, *ptrPDOFColors, *PDOFReorder;
      
   public:
     TParFEMapper3D(int N_dim, TFESpace3D *fespace, int *rowptr, int *kcol);
@@ -84,6 +117,18 @@ class TParFEMapper3D
     void ConstructDofMap();			//MapperType 2
     
     int find_min(int *arr, int N, char *temp_arr);
+    
+    void colorCell(int N_U, int N_Cells, int N_OwnCells, TCollection *Coll);
+    
+    void colorCellGPU(int N_U, int N_Cells, int N_OwnCells, TCollection *Coll);
+    
+    void colorPDOFGPU(int N_U, int N_Cells, TCollection *Coll, char *DofmarkerU);
+    
+    void colorPDOF(int N_U, int N_Cells, TCollection *Coll, char *DofmarkerU);
+    
+    bool match(int *list1, int* list2, int rank);
+    
+    bool match(vector<int> &list1, vector<int> &list2);
     
     void GetCommInfo(int &n_Dim, int &n_Dof,
 		     int &n_SendDof, int &n_SendDofMS, int &n_SendDofH1, int &n_SendDofH2,
@@ -154,6 +199,9 @@ class TParFEMapper3D
     int GetN_Master()
     {return N_Master;}
     
+    int GetN_OwnDof()
+    {return N_OwnDof;}
+    
     int *GetMaster()
     {return Master;}
     
@@ -193,6 +241,7 @@ class TParFEMapper3D
 #ifdef _HYBRID
     void Color(int &numColors, int *&ptrColors, char type);
     
+    
     int GetN_CMaster()
     {return N_CMaster;}
     int* GetptrCMaster()
@@ -213,6 +262,27 @@ class TParFEMapper3D
     int* GetptrCInt()
     {return ptrCInt;}
     
+    int GetN_CIntCell()
+    {return N_CIntCell;}
+    
+    int* GetptrCellColors()
+    {return ptrCellColors;}
+    
+    int* GetCellReorder()
+    {return CellReorder;}
+
+    int GetMaxCellsPerColor()
+    {return maxCellsPerColor;}
+    
+    int GetN_CPDOF()
+    {return N_CPDOF;}
+    
+    int* GetptrPDOFColors()
+    {return ptrPDOFColors;}
+    
+    int* GetPDOFReorder()
+    {return PDOFReorder;}
+    
 #endif
   
     void Assign_GlobalDofNo();
@@ -220,25 +290,3 @@ class TParFEMapper3D
 
 #endif
 #endif
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

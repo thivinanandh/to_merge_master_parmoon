@@ -1,3 +1,29 @@
+/** ==========================================================================
+#    This file is part of the finite element software ParMooN.
+# 
+#    ParMooN (cmg.cds.iisc.ac.in/parmoon) is a free finite element software  
+#    developed by the research groups of Prof. Sashikumaar Ganesan (IISc, Bangalore),
+#    Prof. Volker John (WIAS Berlin) and Prof. Gunar Matthies (TU-Dresden):
+#
+#    ParMooN is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU Affero General Public License as
+#    published by the Free Software Foundation, either version 3 of the
+#    License, or (at your option) any later version.
+#
+#    ParMooN is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU Affero General Public License for more details.
+#
+#    You should have received a copy of the GNU Affero General Public License
+#    along with ParMooN.  If not, see <http://www.gnu.org/licenses/>.
+#
+#    If your company is selling a software using ParMooN, please consider 
+#    the option to obtain a commercial license for a fee. Please send 
+#    corresponding requests to sashi@iisc.ac.in
+
+# =========================================================================*/ 
+   
 /** ************************************************************************ 
 * @brief     source file for TSystemCD3D
 * @author    Sashikumaar Ganesan
@@ -305,9 +331,15 @@ void TSystemCD3D::Init(CoeffFct3D *BilinearCoeffs, BoundCondFunct3D *BoundCond, 
        MGLevel = new TMGLevel3D(i, SQMATRICES[0], RHSs[0], SolArray[i], N_aux, NULL);
 #endif
        MG->AddLevel(MGLevel);      
+       
       }       
     } // for(i=Star
     
+    // solve linear system
+        #ifdef _CUDA
+          MG->InitGPU();
+
+         #endif
 } // TSystemCD3D::Init
 
 
@@ -327,7 +359,10 @@ void TSystemCD3D::Assemble()
      AMatRhsAssemble[i]->Assemble3D();
   
      // set rhs for Dirichlet nodes
-     memcpy(SolArray[i]+N_Active, RhsArray[i]+N_Active, (N_DOF_low - N_Active)*SizeOfDouble);   
+     memcpy(SolArray[i]+N_Active, RhsArray[i]+N_Active, (N_DOF_low - N_Active)*SizeOfDouble);  
+
+     sqmatrixA[i]->SetMklMatrix(N_Active);
+      
     } //  for(i=Start_Level;i<N_Levels;i++)    
 
 //have to shift this in pardirectsolver    
@@ -360,8 +395,13 @@ void TSystemCD3D::Solve(double *sol, double *rhs)
          }
          
          // solve linear system
+        #ifdef _CUDA
+        Itmethod->IterateGPU(sqmatrices, NULL, Itmethod_sol, Itmethod_rhs,0);
+        #else
+        
+          cout<<"seq Iterate"<<endl;
         Itmethod->Iterate(sqmatrices, NULL, Itmethod_sol, Itmethod_rhs);
-
+        #endif
         if (TDatabase::ParamDB->SC_PRECONDITIONER_SCALAR == 5)
          {
           memcpy(sol, Itmethod_sol, N_DOF*SizeOfDouble);
@@ -394,5 +434,3 @@ void TSystemCD3D::Solve(double *sol, double *rhs)
      }    
   
 }
-
-

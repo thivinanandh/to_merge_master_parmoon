@@ -10,7 +10,7 @@ if("${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI")
 
      add_library(par STATIC ${PAR_SOURCES})
 
-elseif("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" )
+elseif("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "HYBRID" OR "${AParMooN_PARALLEL_TYPE}" STREQUAL "MCUDA")
 
    list(APPEND PAR_SOURCES "${PROJECT_SOURCE_DIR}/src/Parallel/MeshPartition.C") 
    list(APPEND PAR_SOURCES "${PROJECT_SOURCE_DIR}/src/Parallel/MumpsSolver.C")
@@ -18,7 +18,11 @@ elseif("${AParMooN_PARALLEL_TYPE}" STREQUAL "MPI"  OR "${AParMooN_PARALLEL_TYPE}
    list(APPEND PAR_SOURCES "${PROJECT_SOURCE_DIR}/src/Parallel/ParFECommunicator3D.C")
    list(APPEND PAR_SOURCES "${PROJECT_SOURCE_DIR}/src/Parallel/ParDirectSolver.C")
    list(APPEND PAR_SOURCES "${PROJECT_SOURCE_DIR}/src/Parallel/ParDiso.C")
-
+   
+   #if("${AParMooN_PARALLEL_TYPE}" STREQUAL "MCUDA")
+     list(APPEND PAR_SOURCES "${PROJECT_SOURCE_DIR}/src/Parallel/ColorCell.cu")
+   #endif("${AParMooN_PARALLEL_TYPE}" STREQUAL "MCUDA")
+   
    add_library(par STATIC ${PAR_SOURCES})
 
 endif("${AParMooN_PARALLEL_TYPE}" STREQUAL "SMPI")

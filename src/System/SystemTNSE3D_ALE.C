@@ -909,7 +909,7 @@ void TSystemTNSE3D_ALE::Init(CoeffFct3D *lincoeffs, BoundCondFunct3D *BoundCond,
                                              velocity_space_code, pressure_space_code,
                                              NULL, NULL
 		#ifdef _MPI
-	  , ParComm_U[i], ParComm_P[i]
+	  , ParComm_U[i], ParComm_P[i], ParMapper_P[i]
 #endif		
 	      );
               MG->AddLevel(MGLevel);

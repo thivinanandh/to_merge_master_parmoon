@@ -38,8 +38,8 @@
 #ifdef _MPI
 extern "C"
 {
-  #include <metis.h>
-  #include <parmetis.h>
+  #include <../../EXT_LIB/Metis/Lib/metis.h>
+  // #include <../../EXT_LIB/Metis/Lib/parmetis.h>
 }
 #endif
 

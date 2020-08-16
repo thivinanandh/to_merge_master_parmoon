@@ -1,3 +1,29 @@
+/** ==========================================================================
+#    This file is part of the finite element software ParMooN.
+# 
+#    ParMooN (cmg.cds.iisc.ac.in/parmoon) is a free finite element software  
+#    developed by the research groups of Prof. Sashikumaar Ganesan (IISc, Bangalore),
+#    Prof. Volker John (WIAS Berlin) and Prof. Gunar Matthies (TU-Dresden):
+#
+#    ParMooN is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU Affero General Public License as
+#    published by the Free Software Foundation, either version 3 of the
+#    License, or (at your option) any later version.
+#
+#    ParMooN is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU Affero General Public License for more details.
+#
+#    You should have received a copy of the GNU Affero General Public License
+#    along with ParMooN.  If not, see <http://www.gnu.org/licenses/>.
+#
+#    If your company is selling a software using ParMooN, please consider 
+#    the option to obtain a commercial license for a fee. Please send 
+#    corresponding requests to sashi@iisc.ac.in
+
+# =========================================================================*/ 
+   
 // =======================================================================
 // @(#)NSE_MGLevel4.h        1.6 07/03/00
 //
@@ -17,6 +43,7 @@
 #define __NSE_MGLEVEL4__
 
 #include <NSE_MGLevel.h>
+#include <Magma_Solver.h>
 
 class TNSE_MGLevel4 : public TNSE_MGLevel
 {
@@ -197,6 +224,11 @@ class TNSE_MGLevel4 : public TNSE_MGLevel
 
     /** matrix entries of matrix C */
     double *CEntries;
+
+    /** total local DOFs in a cell */
+    int N_U, N_P, N_LocalDOF;
+
+    Magma_Solver *mg_solver;
     
 #ifdef _MPI
     
@@ -206,6 +238,15 @@ class TNSE_MGLevel4 : public TNSE_MGLevel
     queue* cell_queue;
     
     int *re_pdof;
+    TParFEMapper3D *ParMapper;
+    
+#endif
+    
+#ifdef _HYBRID
+    
+    int N_CIntCell, *ptrCellColors, *CellReorder, maxCellsPerColor;
+    int N_CPDOF, *ptrPDOFColors, *PDOFReorder;
+    
 #endif
     
   public:
@@ -245,7 +286,7 @@ class TNSE_MGLevel4 : public TNSE_MGLevel
                   int n_aux, double *al, int VelocitySpace, 
                   int PressureSpace, TCollection *coll, int *dw  
 #ifdef _MPI
-		  ,TParFECommunicator3D *parComm_U, TParFECommunicator3D *parComm_P
+		  ,TParFECommunicator3D *parComm_U, TParFECommunicator3D *parComm_P, TParFEMapper3D *parMapper_P
 #endif
 		 );
 
@@ -268,6 +309,66 @@ TNSE_MGLevel4(int level,
     /** destructor */
     ~TNSE_MGLevel4();
 
+    TSquareMatrix3D *GetA11Matrix(){
+        return A11;
+    }
+
+    TSquareMatrix3D *GetA12Matrix(){
+        return A12;
+    }
+
+    TSquareMatrix3D *GetA13Matrix(){
+        return A13;
+    }
+
+    TSquareMatrix3D *GetA21Matrix(){
+        return A21;
+    }
+
+    TSquareMatrix3D *GetA22Matrix(){
+        return A22;
+    }
+
+    TSquareMatrix3D *GetA23Matrix(){
+        return A23;
+    }
+
+    TSquareMatrix3D *GetA31Matrix(){
+        return A31;
+    }
+
+    TSquareMatrix3D *GetA32Matrix(){
+        return A32;
+    }
+
+    TSquareMatrix3D *GetA33Matrix(){
+        return A33;
+    }
+
+    TMatrix3D *GetB1Matrix(){
+        return B1;
+    }
+
+    TMatrix3D *GetB2Matrix(){
+        return B2;
+    }
+
+    TMatrix3D *GetB3Matrix(){
+        return B3;
+    }
+
+    TMatrix3D *GetB1TMatrix(){
+        return B1T;
+    }
+
+    TMatrix3D *GetB2TMatrix(){
+        return B2T;
+    }
+
+    TMatrix3D *GetB3TMatrix(){
+        return B3T;
+    }
+
     virtual void Defect(double *u1, double *f1, double *d1, double &res);
 
     /** correct Dirichlet and hanging nodes */
@@ -280,7 +381,54 @@ TNSE_MGLevel4(int level,
     /** Vanka smoother */
     virtual void NodalVanka(double *u1, double *rhs1, double *aux, 
         int N_Parameters, double *Parameters, int smoother, int N_Levels);
+#ifdef _MPI
+#ifdef _HYBRID
+#ifdef _CUDA
+    
+    virtual void CellVanka_CPU_GPU(double *u1, double *rhs1, double *aux,
+        int N_Parameters, double *Parameters, int smoother, int smooth, cudaStream_t *stream, int* d_ARowPtr, int*  d_AKCol,
+        double* d_A11Entries, double* d_A12Entries, double* d_A13Entries,
+        double* d_A21Entries, double* d_A22Entries, double* d_A23Entries,
+        double* d_A31Entries, double* d_A32Entries, double* d_A33Entries,
+        int* d_BTRowPtr, int*  d_BTKCol,
+        double* d_B1TEntries, double* d_B2TEntries, double* d_B3TEntries,
+        int* d_BRowPtr, int*  d_BKCol,
+        double* d_B1Entries, double* d_B2Entries, double* d_B3Entries);
+    
+    virtual void CellVanka_GPU(double *u1, double *rhs1, double *aux,
+        int N_Parameters, double *Parameters, int smoother, int smooth, cudaStream_t *stream, int* d_ARowPtr, int*  d_AKCol,
+        double* d_A11Entries, double* d_A12Entries, double* d_A13Entries,
+        double* d_A21Entries, double* d_A22Entries, double* d_A23Entries,
+        double* d_A31Entries, double* d_A32Entries, double* d_A33Entries,
+        int* d_BTRowPtr, int*  d_BTKCol,
+        double* d_B1TEntries, double* d_B2TEntries, double* d_B3TEntries,
+        int* d_BRowPtr, int*  d_BKCol,
+        double* d_B1Entries, double* d_B2Entries, double* d_B3Entries);
+    
+    // virtual void CellVanka_Level_Split(double *u1, double *rhs1, double *aux,
+    //     int N_Parameters, double *Parameters, int smoother, int smooth);
+    
+    virtual void CellVanka_Combo(double *u1, double *rhs1, double *aux,
+        int N_Parameters, double *Parameters, int smoother, int smooth, cudaStream_t *stream, int* d_ARowPtr, int*  d_AKCol,
+        double* d_A11Entries, double* d_A12Entries, double* d_A13Entries,
+        double* d_A21Entries, double* d_A22Entries, double* d_A23Entries,
+        double* d_A31Entries, double* d_A32Entries, double* d_A33Entries,
+        int* d_BTRowPtr, int*  d_BTKCol,
+        double* d_B1TEntries, double* d_B2TEntries, double* d_B3TEntries,
+        int* d_BRowPtr, int*  d_BKCol,
+        double* d_B1Entries, double* d_B2Entries, double* d_B3Entries);
 
+    virtual void NodalVanka_CPU_GPU(double *u1, double *rhs1, double *aux,
+        int N_Parameters, double *Parameters, int smoother, int smooth);
+    
+    virtual void NodalVanka_GPU(double *u1, double *rhs1, double *aux,
+        int N_Parameters, double *Parameters, int smoother, int smooth);
+    
+    virtual void NodalVanka_Level_Split(double *u1, double *rhs1, double *aux,
+        int N_Parameters, double *Parameters, int smoother, int smooth);
+#endif
+#endif
+#endif    
     /** solve exact on this level */
     virtual void SolveExact(double *u1, double *rhs1);
 
@@ -315,8 +463,9 @@ TNSE_MGLevel4(int level,
     
     virtual void UpdateHaloRhs(double*, double*); 
     
+
+    
 #endif
 };
 
 #endif
-

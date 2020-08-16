@@ -1,3 +1,29 @@
+/** ==========================================================================
+#    This file is part of the finite element software ParMooN.
+# 
+#    ParMooN (cmg.cds.iisc.ac.in/parmoon) is a free finite element software  
+#    developed by the research groups of Prof. Sashikumaar Ganesan (IISc, Bangalore),
+#    Prof. Volker John (WIAS Berlin) and Prof. Gunar Matthies (TU-Dresden):
+#
+#    ParMooN is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU Affero General Public License as
+#    published by the Free Software Foundation, either version 3 of the
+#    License, or (at your option) any later version.
+#
+#    ParMooN is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU Affero General Public License for more details.
+#
+#    You should have received a copy of the GNU Affero General Public License
+#    along with ParMooN.  If not, see <http://www.gnu.org/licenses/>.
+#
+#    If your company is selling a software using ParMooN, please consider 
+#    the option to obtain a commercial license for a fee. Please send 
+#    corresponding requests to sashi@iisc.ac.in
+
+# =========================================================================*/ 
+   
 /** ************************************************************************ 
 * @brief     source file for TSystemNSE3D
 * @author    Sashikumaar Ganesan, 
@@ -21,6 +47,7 @@
 #include <FgmresIte.h>
 #include <Upwind3D.h>
 #include <AssembleMat3D.h>
+#include <FEDatabase3D.h>
 
 #include <NSE_MultiGrid.h>
 #include <NSE_MGLevel1.h>
@@ -302,9 +329,54 @@ TSystemNSE3D::TSystemNSE3D(int N_levels, TFESpace3D **velocity_fespace, TFESpace
   for(i=Start_Level;i<N_levels;i++)
   {
     ParMapper_U[i] = new TParFEMapper3D(3, U_Space[i], sqstructureA[i]->GetRowPtr(),sqstructureA[i]->GetKCol());
-    ParMapper_P[i] = new TParFEMapper3D(1, P_Space[i], structureBT[i]->GetRowPtr(),  structureBT[i]->GetKCol());
-      
+    ParMapper_P[i] = new TParFEMapper3D(1, P_Space[i], structureB[i]->GetRowPtr(),  structureB[i]->GetKCol());
+    
+    
     ParComm_U[i] = new TParFECommunicator3D(ParMapper_U[i]);
+    #ifdef _MPI
+            #ifdef _HYBRID
+    TCollection *Coll;
+    Coll = U_Space[i]->GetCollection();
+    int N_Cells = Coll->GetN_Cells();
+    int N_OwnCells = Coll->GetN_OwnCells();
+    
+    TFE3D *UEle;
+    TBaseCell *Cell;
+    
+    Cell = Coll->GetCell(0);
+    UEle = TFEDatabase3D::GetFE3D(U_Space[i]->GetFE3D(0, Cell));
+    int N_U = UEle->GetN_DOF();
+//     cout<<"N_U:"<<N_U<<endl;
+    
+    int smoother = TDatabase::ParamDB->SC_SMOOTHER_SADDLE;
+    
+    char *DofmarkerU = ParComm_U[i]->Get_DofMarker();
+    
+    
+    if(smoother<=23 && smoother!=4 && smoother!=3){
+
+        #ifdef _CUDA
+        ParMapper_P[i]->colorCellGPU(N_U, N_Cells, N_OwnCells, Coll);
+        #else
+        ParMapper_P[i]->colorCell(N_U, N_Cells, N_OwnCells, Coll);
+        #endif
+    }
+    else{
+        
+        #ifdef _CUDA
+        ParMapper_P[i]->colorPDOFGPU(N_U, N_Cells, Coll, DofmarkerU);
+        #else
+        ParMapper_P[i]->colorPDOF(N_U, N_Cells, Coll, DofmarkerU);
+        #endif
+    
+    
+    }
+#endif
+#endif
+
+    
+    
+    
     ParComm_P[i] = new TParFECommunicator3D(ParMapper_P[i]);
   }
 
@@ -794,15 +866,17 @@ void TSystemNSE3D::Init(CoeffFct3D *lincoeffs, BoundCondFunct3D *BoundCond, Boun
                                              velocity_space_code, pressure_space_code,
                                              NULL, NULL
 #ifdef _MPI
-	  , ParComm_U[i], ParComm_P[i]
+	  , ParComm_U[i], ParComm_P[i], ParMapper_P[i]
 #endif
 	  );
               MG->AddLevel(MGLevel);
           break;	
         } //  switch(NSEType)
        }  // if(SOLVER==GMG)     
-     } // for(i=Start_Level;i<N_Levels;i++)      
-              
+     } // for(i=Start_Level;i<N_Levels;i++)     
+#ifdef _CUDA
+    MG->InitGPU();
+#endif
 //  cout << " TSystemNSE3D::Init done ! " << endl; 
               
 } // TSystemNSE3D::Init
@@ -1145,8 +1219,11 @@ void TSystemNSE3D::Solve(double *sol, double *rhs)
             memcpy(Itmethod_rhs, rhs, N_TotalDOF*SizeOfDouble);
            }
           // solve the linear system
-          N_LinIter += Itmethod->Iterate(sqmatrices, matrices, Itmethod_sol, Itmethod_rhs);
-	  
+          #ifdef _CUDA
+            N_LinIter += Itmethod->IterateGPU(sqmatrices, matrices, Itmethod_sol, Itmethod_rhs,0);
+          #else
+            N_LinIter += Itmethod->Iterate(sqmatrices, matrices, Itmethod_sol, Itmethod_rhs);
+          #endif
           if(TDatabase::ParamDB->SC_PRECONDITIONER_SADDLE == 5)
            {
             memcpy(sol, Itmethod_sol, N_TotalDOF*SizeOfDouble);

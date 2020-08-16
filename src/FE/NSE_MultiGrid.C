@@ -1,3 +1,29 @@
+/** ==========================================================================
+#    This file is part of the finite element software ParMooN.
+# 
+#    ParMooN (cmg.cds.iisc.ac.in/parmoon) is a free finite element software  
+#    developed by the research groups of Prof. Sashikumaar Ganesan (IISc, Bangalore),
+#    Prof. Volker John (WIAS Berlin) and Prof. Gunar Matthies (TU-Dresden):
+#
+#    ParMooN is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU Affero General Public License as
+#    published by the Free Software Foundation, either version 3 of the
+#    License, or (at your option) any later version.
+#
+#    ParMooN is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU Affero General Public License for more details.
+#
+#    You should have received a copy of the GNU Affero General Public License
+#    along with ParMooN.  If not, see <http://www.gnu.org/licenses/>.
+#
+#    If your company is selling a software using ParMooN, please consider 
+#    the option to obtain a commercial license for a fee. Please send 
+#    corresponding requests to sashi@iisc.ac.in
+
+# =========================================================================*/ 
+   
 // =======================================================================
 // @(#)NSE_MultiGrid.C        1.24 06/27/00
 //
@@ -19,6 +45,7 @@
 
 #include <NSE_MGLevel5.h>
 #include <NSE_MGLevel4.h>
+#include <mkl.h>
 #ifdef __2D__
   #include <FEDatabase2D.h>
 #endif  
@@ -34,6 +61,22 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define PreSmooth -1
+#define CoarseSmooth 0
+#define PostSmooth 1
+
+#define CUDA_CHECK(call) \
+do {\
+            cudaError_t err = call;\
+            if (cudaSuccess != err) \
+            {\
+                std::cerr << "CUDA error in " << __FILE__ << "(" << __LINE__ << "): " \
+                    << cudaGetErrorString(err) << std::endl;\
+                exit(EXIT_FAILURE);\
+            }\
+        } while(0)
+
+double tSmoother2=0.0;
 /** constructor */
 TNSE_MultiGrid::TNSE_MultiGrid(int n_problems, int n_parameters, 
                                  double *parameters)
@@ -57,6 +100,253 @@ void TNSE_MultiGrid::AddLevel(TNSE_MGLevel *MGLevel)
 
   N_Levels++;
 }
+
+#ifdef _CUDA
+void TNSE_MultiGrid::InitGPU(){
+
+  TNSE_MGLevel *finest_level = MultiGridLevels[N_Levels-1];
+  
+  TSquareMatrix3D *A11 = static_cast<TNSE_MGLevel4*>(finest_level)->GetA11Matrix();
+  TMatrix3D *B1 = static_cast<TNSE_MGLevel4*>(finest_level)->GetB1Matrix();
+  TMatrix3D *B1T = static_cast<TNSE_MGLevel4*>(finest_level)->GetB1TMatrix();
+
+  nStreams = 2;
+
+  stream_smooth = new cudaStream_t[nStreams];
+
+  for (int i = 0; i < nStreams; ++i)
+        CUDA_CHECK( cudaStreamCreate(&stream_smooth[i]) );
+
+  CUDA_CHECK( cudaStreamCreate(&stream_transfer));
+
+  int nz_A = A11->GetN_Entries();
+  int n_A = A11->GetN_Rows(); 
+  
+  int nz_B = B1->GetN_Entries();
+  int n_B = B1->GetN_Rows(); 
+  
+  int nz_BT = B1T->GetN_Entries();
+  int n_BT = B1T->GetN_Rows(); 
+  
+  // cout<<nz<<endl;
+  // cout<<n<<endl;
+
+  #ifdef _CUDA
+    CUDA_CHECK(cudaMalloc((void**)&d_ARowPtr1, (n_A+1) * sizeof(int)));
+    CUDA_CHECK(cudaMalloc((void**)&d_AKCol1, nz_A * sizeof(int)));
+    CUDA_CHECK(cudaMalloc((void**)&d_A11Entries1, nz_A * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_A12Entries1, nz_A * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_A13Entries1, nz_A * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_A21Entries1, nz_A * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_A22Entries1, nz_A * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_A23Entries1, nz_A * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_A31Entries1, nz_A * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_A32Entries1, nz_A * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_A33Entries1, nz_A * sizeof(double)));
+
+    CUDA_CHECK(cudaMalloc((void**)&d_ARowPtr2, (n_A+1) * sizeof(int)));
+    CUDA_CHECK(cudaMalloc((void**)&d_AKCol2, nz_A * sizeof(int)));
+    CUDA_CHECK(cudaMalloc((void**)&d_A11Entries2, nz_A * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_A12Entries2, nz_A * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_A13Entries2, nz_A * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_A21Entries2, nz_A * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_A22Entries2, nz_A * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_A23Entries2, nz_A * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_A31Entries2, nz_A * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_A32Entries2, nz_A * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_A33Entries2, nz_A * sizeof(double)));
+
+    CUDA_CHECK(cudaMalloc((void**)&d_BTRowPtr1, (n_BT+1) * sizeof(int)));
+    CUDA_CHECK(cudaMalloc((void**)&d_BTKCol1, nz_BT * sizeof(int)));
+    CUDA_CHECK(cudaMalloc((void**)&d_B1TEntries1, nz_BT * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_B2TEntries1, nz_BT * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_B3TEntries1, nz_BT * sizeof(double)));
+
+    CUDA_CHECK(cudaMalloc((void**)&d_BTRowPtr2, (n_BT+1) * sizeof(int)));
+    CUDA_CHECK(cudaMalloc((void**)&d_BTKCol2, nz_BT * sizeof(int)));
+    CUDA_CHECK(cudaMalloc((void**)&d_B1TEntries2, nz_BT * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_B2TEntries2, nz_BT * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_B3TEntries2, nz_BT * sizeof(double)));
+
+    CUDA_CHECK(cudaMalloc((void**)&d_BRowPtr1, (n_B+1) * sizeof(int)));
+    CUDA_CHECK(cudaMalloc((void**)&d_BKCol1, nz_B * sizeof(int)));
+    CUDA_CHECK(cudaMalloc((void**)&d_B1Entries1, nz_B * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_B2Entries1, nz_B * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_B3Entries1, nz_B * sizeof(double)));
+
+    CUDA_CHECK(cudaMalloc((void**)&d_BRowPtr2, (n_B+1) * sizeof(int)));
+    CUDA_CHECK(cudaMalloc((void**)&d_BKCol2, nz_B * sizeof(int)));
+    CUDA_CHECK(cudaMalloc((void**)&d_B1Entries2, nz_B * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_B2Entries2, nz_B * sizeof(double)));
+    CUDA_CHECK(cudaMalloc((void**)&d_B3Entries2, nz_B * sizeof(double)));
+
+  #endif
+
+}
+
+void SwapDPointers(double** t1, double** t2){
+  double* t = *t1;
+  *t1 = *t2;
+  *t2 = t;
+}
+
+void SwapIPointers(int** t1, int** t2){
+  int* t = *t1;
+  *t1 = *t2;
+  *t2 = t;
+}
+
+void TNSE_MultiGrid::Swap_Matrices(){
+
+// int rank;
+//   #ifdef _MPI
+//     MPI_Comm_rank(TDatabase::ParamDB->Comm,&rank);
+//     #endif
+  
+//   if(rank==0){
+//         cout<<"BIT before:"<<cblas_dnrm2(5,d_B1TEntries2,1)<<"\t"<<endl;
+//   }
+
+
+  SwapIPointers(&d_ARowPtr1, &d_ARowPtr2);
+  SwapIPointers(&d_AKCol1, &d_AKCol2);
+
+  SwapDPointers(&d_A11Entries1, &d_A11Entries2);
+  SwapDPointers(&d_A12Entries1, &d_A12Entries2);
+  SwapDPointers(&d_A13Entries1, &d_A13Entries2);
+
+  SwapDPointers(&d_A21Entries1, &d_A21Entries2);
+  SwapDPointers(&d_A22Entries1, &d_A22Entries2);
+  SwapDPointers(&d_A23Entries1, &d_A23Entries2);
+
+  SwapDPointers(&d_A31Entries1, &d_A31Entries2);
+  SwapDPointers(&d_A32Entries1, &d_A32Entries2);
+  SwapDPointers(&d_A33Entries1, &d_A33Entries2);
+
+  SwapIPointers(&d_BTRowPtr1, &d_BTRowPtr2);
+  SwapIPointers(&d_BTKCol1, &d_BTKCol2);
+
+  SwapDPointers(&d_B1TEntries1, &d_B1TEntries2);
+  SwapDPointers(&d_B2TEntries1, &d_B2TEntries2);
+  SwapDPointers(&d_B3TEntries1, &d_B3TEntries2);
+
+  SwapIPointers(&d_BRowPtr1, &d_BRowPtr2);
+  SwapIPointers(&d_BKCol1, &d_BKCol2);
+
+  SwapDPointers(&d_B1Entries1, &d_B1Entries2);
+  SwapDPointers(&d_B2Entries1, &d_B2Entries2);
+  SwapDPointers(&d_B3Entries1, &d_B3Entries2);
+
+  // if(rank==0){
+  //       cout<<"BIT after:"<<cblas_dnrm2(100,d_B1TEntries1,1)<<"\t"<<endl;
+  // }
+  
+}
+
+void TNSE_MultiGrid::DeviceDataTransfer(int next_level, int smooth){
+
+  TNSE_MGLevel *next_level1 = MultiGridLevels[next_level];
+
+  TSquareMatrix3D *A11 = static_cast<TNSE_MGLevel4*>(next_level1)->GetA11Matrix();
+  TSquareMatrix3D *A12 = static_cast<TNSE_MGLevel4*>(next_level1)->GetA12Matrix();
+  TSquareMatrix3D *A13 = static_cast<TNSE_MGLevel4*>(next_level1)->GetA13Matrix();
+
+  TSquareMatrix3D *A21 = static_cast<TNSE_MGLevel4*>(next_level1)->GetA21Matrix();
+  TSquareMatrix3D *A22 = static_cast<TNSE_MGLevel4*>(next_level1)->GetA22Matrix();
+  TSquareMatrix3D *A23 = static_cast<TNSE_MGLevel4*>(next_level1)->GetA23Matrix();
+
+  TSquareMatrix3D *A31 = static_cast<TNSE_MGLevel4*>(next_level1)->GetA31Matrix();
+  TSquareMatrix3D *A32 = static_cast<TNSE_MGLevel4*>(next_level1)->GetA32Matrix();
+  TSquareMatrix3D *A33 = static_cast<TNSE_MGLevel4*>(next_level1)->GetA33Matrix();
+
+  TMatrix3D *B1 = static_cast<TNSE_MGLevel4*>(next_level1)->GetB1Matrix();
+  TMatrix3D *B2 = static_cast<TNSE_MGLevel4*>(next_level1)->GetB2Matrix();
+  TMatrix3D *B3 = static_cast<TNSE_MGLevel4*>(next_level1)->GetB3Matrix();
+
+  TMatrix3D *B1T = static_cast<TNSE_MGLevel4*>(next_level1)->GetB1TMatrix();
+  TMatrix3D *B2T = static_cast<TNSE_MGLevel4*>(next_level1)->GetB2TMatrix();
+  TMatrix3D *B3T = static_cast<TNSE_MGLevel4*>(next_level1)->GetB3TMatrix();
+
+  TStructure3D *StructureBT = B1T->GetStructure();
+  TStructure3D *StructureB = B1->GetStructure();
+
+  int nz_A = A11->GetN_Entries();
+  int n_A = A11->GetN_Rows(); 
+  
+  int nz_B = B1->GetN_Entries();
+  int n_B = B1->GetN_Rows(); 
+  
+  int nz_BT = B1T->GetN_Entries();
+  int n_BT = B1T->GetN_Rows(); 
+
+  // cout<<"nzA:"<<nz_A<<endl;
+  // cout<<"nA:"<<n_A<<endl;
+
+  //   cout<<"nzB:"<<nz_B<<endl;
+  // cout<<"nB:"<<n_B<<endl;
+
+  //   cout<<"nzA:"<<nz_BT<<endl;
+  // cout<<"nA:"<<n_BT<<endl;
+
+
+  CUDA_CHECK(cudaMemcpyAsync(d_ARowPtr2, A11->GetRowPtr(), (n_A+1) * sizeof(int), cudaMemcpyHostToDevice,stream_transfer));
+    
+  CUDA_CHECK(cudaMemcpyAsync(d_AKCol2, A11->GetKCol(), nz_A * sizeof(int), cudaMemcpyHostToDevice,stream_transfer));
+  
+  CUDA_CHECK(cudaMemcpyAsync(d_A11Entries2, A11->GetEntries(), nz_A * sizeof(double), cudaMemcpyHostToDevice,stream_transfer));
+  
+  CUDA_CHECK(cudaMemcpyAsync(d_A12Entries2, A12->GetEntries(), nz_A * sizeof(double), cudaMemcpyHostToDevice,stream_transfer));
+  
+  CUDA_CHECK(cudaMemcpyAsync(d_A13Entries2, A13->GetEntries(), nz_A * sizeof(double), cudaMemcpyHostToDevice,stream_transfer));
+  
+  CUDA_CHECK(cudaMemcpyAsync(d_A21Entries2, A21->GetEntries(), nz_A * sizeof(double), cudaMemcpyHostToDevice,stream_transfer));
+  
+  CUDA_CHECK(cudaMemcpyAsync(d_A22Entries2, A22->GetEntries(), nz_A * sizeof(double), cudaMemcpyHostToDevice,stream_transfer));
+  
+  CUDA_CHECK(cudaMemcpyAsync(d_A23Entries2, A23->GetEntries(), nz_A * sizeof(double), cudaMemcpyHostToDevice,stream_transfer));
+  
+  CUDA_CHECK(cudaMemcpyAsync(d_A31Entries2, A31->GetEntries(), nz_A * sizeof(double), cudaMemcpyHostToDevice,stream_transfer));
+  
+  CUDA_CHECK(cudaMemcpyAsync(d_A32Entries2, A32->GetEntries(), nz_A * sizeof(double), cudaMemcpyHostToDevice,stream_transfer));
+  
+  CUDA_CHECK(cudaMemcpyAsync(d_A33Entries2, A33->GetEntries(), nz_A * sizeof(double), cudaMemcpyHostToDevice,stream_transfer));
+
+  // int rank=0;
+
+  // int* rowptr=A11->GetRowPtr();
+  
+    
+  //   #ifdef _MPI
+  //   MPI_Comm_rank(TDatabase::ParamDB->Comm,&rank);
+  //   #endif
+  
+  // if(rank==0){
+  //       cout<<"BIT:"<<cblas_dnrm2(nz_BT,B1T->GetEntries(),1)<<"\t"<<rowptr[3]<<"\t"<<endl;
+  // }
+  CUDA_CHECK(cudaMemcpyAsync(d_BTRowPtr2, StructureBT->GetRowPtr(), (n_BT+1) * sizeof(int), cudaMemcpyHostToDevice,stream_transfer));
+    
+  CUDA_CHECK(cudaMemcpyAsync(d_BTKCol2, StructureBT->GetKCol(), nz_BT * sizeof(int), cudaMemcpyHostToDevice,stream_transfer));
+  
+  CUDA_CHECK(cudaMemcpyAsync(d_B1TEntries2, B1T->GetEntries(), nz_BT * sizeof(double), cudaMemcpyHostToDevice,stream_transfer));
+  
+  CUDA_CHECK(cudaMemcpyAsync(d_B2TEntries2, B2T->GetEntries(), nz_BT * sizeof(double), cudaMemcpyHostToDevice,stream_transfer));
+  
+  CUDA_CHECK(cudaMemcpyAsync(d_B3TEntries2, B3T->GetEntries(), nz_BT * sizeof(double), cudaMemcpyHostToDevice,stream_transfer));
+
+
+  CUDA_CHECK(cudaMemcpyAsync(d_BRowPtr2, StructureB->GetRowPtr(), (n_B+1) * sizeof(int), cudaMemcpyHostToDevice,stream_transfer));
+      
+  CUDA_CHECK(cudaMemcpyAsync(d_BKCol2, StructureB->GetKCol(), nz_B * sizeof(int), cudaMemcpyHostToDevice,stream_transfer));
+  
+  CUDA_CHECK(cudaMemcpyAsync(d_B1Entries2, B1->GetEntries(), nz_B * sizeof(double), cudaMemcpyHostToDevice,stream_transfer));
+  
+  CUDA_CHECK(cudaMemcpyAsync(d_B2Entries2, B2->GetEntries(), nz_B * sizeof(double), cudaMemcpyHostToDevice,stream_transfer));
+  
+  CUDA_CHECK(cudaMemcpyAsync(d_B3Entries2, B3->GetEntries(), nz_B * sizeof(double), cudaMemcpyHostToDevice,stream_transfer));
+
+}
+
+#endif
 
 /** replace level i by given MGLevel and return old level */
 TNSE_MGLevel *TNSE_MultiGrid::ReplaceLevel(int i, 
@@ -159,6 +449,7 @@ void TNSE_MultiGrid::Cycle(int i, double &res)
   double *defect, alpha;
   double divfactor = TDatabase::ParamDB->SC_DIV_FACTOR;
   int rank=0;
+  double t1,t2;
   
 #ifdef _MPI
   MPI_Comm_rank(TDatabase::ParamDB->Comm,&rank);
@@ -224,295 +515,602 @@ if(TDatabase::ParamDB->MG_DEBUG && rank==0)
   cout << "//============		=============		=====================		===========//" << endl;
 }
 
+// if(rank==0)
+//     cout<<"norm:"<<res<<"\t"<<i<<"\t"<<mg_recursions[i]<<endl;
+
+
   
 // ===============	HANDLE THE SPECIAL CASE OF COARSEST LEVEL	==========================//
   if(i==0)                     
   {
-// ===========		SET OF DAT VARIABLES USED	::::::::::::
-    // =====	SC_COARSE_SMOOTHER_SADDLE::	TO SET THE SOLVER AT THE COARSE LEVEL
-    //=======	SC_COARSE_MAXIT_SADDLE::	SET MAX ITERATIONS WITH ITERATIVE SOLVER
-    //=======	SC_COARSE_RED_FACTOR_SADDLE::	factor to check reduction in residual
-    
-    smoother = TDatabase::ParamDB->SC_COARSE_SMOOTHER_SADDLE;
-    
-    switch(smoother)
-    {
-      case 17 : 
-        CurrentLevel->SolveExact(CurrentU, CurrentRhsU);
-        CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, res);
-        if (TDatabase::ParamDB->SC_VERBOSE>=2)
-	{
-	    if (res>1e-12)
-	    {
-		OutPut("MESSAGE: residual not zero !! ("<<res); 
-		OutPut(") Check boundary conditions !! "<< endl);
-	    }
-	}
-      break;
-      
-      case 18 : // Direct Solver with UMFPACK
-        //OutPut("This should be done by UMFPACK in the future" << endl);
 
-	  umfpack_flag = (int) Parameters[9];
-        CurrentLevel->SolveExactUMFPACK(CurrentU, CurrentRhsU, umfpack_flag);
-	Parameters[9] = umfpack_flag;
-        CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, res);
-        if (TDatabase::ParamDB->SC_VERBOSE>=2)
-	{
-	    if (res>1e-12)
-	    {
-		OutPut("MESSAGE: residual not zero !! ("<<res); 
-		OutPut(") Check boundary conditions !! "<< endl);
-	    }
-	}
-      break;
-	
-    //	===============		1,2 - CELL-VANKA ITERATIVE SOLVERS 	====================
-      
-      case 1 :
-      case 2 :   
-	
-	//	==============		STEP-LENGTH-CONTROL	===============
-	
-        slc = 0;
-        if (TDatabase::ParamDB->SC_STEP_LENGTH_CONTROL_ALL_SADDLE)
-          slc = 1;
-        else 
-          if ((TDatabase::ParamDB->SC_STEP_LENGTH_CONTROL_FINE_SADDLE)
-                 &&(i==N_Levels-1))
-            slc = 1;
-	
-	  
-        maxit = TDatabase::ParamDB->SC_COARSE_MAXIT_SADDLE; // max # of iterations
-        j = 0;
-
-        // ==================		START OF COARSE GRID COMPUTATION 	===============
-	
-	    // ======================	CHECK DEFECT	===============
-         res2 = oldres = res ;
-        if (TDatabase::ParamDB->SC_VERBOSE>=2)
+    // if(rank==0)
+    // cout<<"norm base:"<<res<<"\t"<<i<<endl;
+        // if(rank==0)
+        // cout<<"norm:"<<res<<endl;
+    // ===========		SET OF DAT VARIABLES USED	::::::::::::
+        // =====	SC_COARSE_SMOOTHER_SADDLE::	TO SET THE SOLVER AT THE COARSE LEVEL
+        //=======	SC_COARSE_MAXIT_SADDLE::	SET MAX ITERATIONS WITH ITERATIVE SOLVER
+        //=======	SC_COARSE_RED_FACTOR_SADDLE::	factor to check reduction in residual
+        
+        smoother = TDatabase::ParamDB->SC_COARSE_SMOOTHER_SADDLE;
+        
+        #ifdef _MPI
+          t1 = MPI_Wtime();
+        #else
+          t1 = GetTime();
+        #endif
+        
+        switch(smoother)
         {
-           OutPut("smoother " <<smoother <<" , level 0 res before smoothing: " << oldres << endl);
-        }
-        
-	    // ======================	END OF CHECK DEFECT	===============
-	    
-        res2 = res = oldres;
-        divfactor *= res;
-        if (slc)
-	{
-	    ii = N_DOF*SizeOfDouble;
-          memcpy(OldU, CurrentU, ii);
-          memcpy(CurrentOldDefU, CurrentAux, ii);
-        }
-        
-        
-        //	============	loop starts	=========================
-        
-        while (((res>TDatabase::ParamDB->SC_COARSE_RED_FACTOR_SADDLE*oldres)
-             || (j==0)))
-        { 
-          // apply smother
-          CurrentLevel->CellVanka(CurrentU, CurrentRhsU, CurrentAux,
-                                  N_Parameters, Parameters, smoother, N_Levels);         
-	  
-          // compute defect
-	  // =================	DEFECT ROUTINE WILL UPDATE SOLUTION IN PARALLEL ======
-	  
-          CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, res);// Required for stopping criteria
-          if (res > divfactor)
+          case 17 : 
+            CurrentLevel->SolveExact(CurrentU, CurrentRhsU);
+            CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, res);
+            if (TDatabase::ParamDB->SC_VERBOSE>=2)
+      {
+          if (res>1e-12)
           {
-            OutPut("mesh cell Vanka : coarse grid solver diverged " <<  res  <<  " j :: " << j << endl);
-            exit(4711);
+        OutPut("MESSAGE: residual not zero !! ("<<res); 
+        OutPut(") Check boundary conditions !! "<< endl);
           }
-          res2 = res;
-          // cout << "residual " << j << " " << res << endl;
-	  
-	   j++;	  
-          // maxit reached             
-          if(j>=maxit) break;
-	  	  
-        }
-        
-        //===================	END OF OBTAINING SOLUTION	===============
-        
-        if (TDatabase::ParamDB->SC_VERBOSE >=2 )
-        {
-          OutPut("smoother " << smoother <<", level 0 res after smoothing: "<< res << " reduction " <<  res/oldres );
-          OutPut(" number of Vanka iters: " << j << endl);
-        }
-        
-        //=================	GET DEFECT	===============================
-        
-        if (slc)
-        { 
-          alpha = CurrentLevel->StepLengthControl(CurrentU, OldU, CurrentOldDefU,
-                              N_Parameters,Parameters);       
+      }
+          break;
+          
+          case 18 : // Direct Solver with UMFPACK
+            //OutPut("This should be done by UMFPACK in the future" << endl);
+
+        umfpack_flag = (int) Parameters[9];
+            CurrentLevel->SolveExactUMFPACK(CurrentU, CurrentRhsU, umfpack_flag);
+      Parameters[9] = umfpack_flag;
+            CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, res);
+            if (TDatabase::ParamDB->SC_VERBOSE>=2)
+      {
+          if (res>1e-12)
+          {
+        OutPut("MESSAGE: residual not zero !! ("<<res); 
+        OutPut(") Check boundary conditions !! "<< endl);
+          }
+      }
+          break;
       
-          for (j=0;j<N_DOF;j++)
-            CurrentU[j] = OldU[j] + alpha *( CurrentU[j]-OldU[j]);
-        }
-        //	==============	MAKE CHANGES AS PER STEP CONTROL	================
+        //	===============		1,2 - CELL-VANKA ITERATIVE SOLVERS 	====================
+          
+          case 1 :
+          case 2 :   
+      
+      //	==============		STEP-LENGTH-CONTROL	===============
+      
+            slc = 0;
+            if (TDatabase::ParamDB->SC_STEP_LENGTH_CONTROL_ALL_SADDLE)
+              slc = 1;
+            else 
+              if ((TDatabase::ParamDB->SC_STEP_LENGTH_CONTROL_FINE_SADDLE)
+                    &&(i==N_Levels-1))
+                slc = 1;
+      
         
-  // ==================		END OF COARSE GRID COMPUTATION 	===============       
-     
-     break;      
-     
-  //================	3,4 - NODAL-VANKA ITERATIVE SOLVERS	==========================
-  
-      case 3 :
-      case 4 :
-        slc =0;
-        if (TDatabase::ParamDB->SC_STEP_LENGTH_CONTROL_ALL_SADDLE)
-          slc = 1;
-        else
-          if ((TDatabase::ParamDB->SC_STEP_LENGTH_CONTROL_FINE_SADDLE)
-                 &&(i==N_Levels-1))
-            slc = 1;
+            maxit = TDatabase::ParamDB->SC_COARSE_MAXIT_SADDLE; // max # of iterations
+            j = 0;
+
+            // ==================		START OF COARSE GRID COMPUTATION 	===============
+      
+          // ======================	CHECK DEFECT	===============
+            res2 = oldres = res ;
+            if (TDatabase::ParamDB->SC_VERBOSE>=2)
+            {
+              OutPut("smoother " <<smoother <<" , level 0 res before smoothing: " << oldres << endl);
+            }
             
-        maxit = TDatabase::ParamDB->SC_COARSE_MAXIT_SADDLE; // max # of iterations
-        j = 0;
-		
-        oldres = res;
-        
-	if (TDatabase::ParamDB->SC_VERBOSE>=2)
-           OutPut("smoother " << smoother <<"level 0 res before smoothing: " << oldres << endl);
-	
-        if (slc)
-	{
-          memcpy(OldU, CurrentU, N_DOF*SizeOfDouble);
-          memcpy(CurrentOldDefU, CurrentAux, N_DOF*SizeOfDouble); // required for slc
-        }        	
-        // iterate
-         while (((res>TDatabase::ParamDB->SC_COARSE_RED_FACTOR_SADDLE*oldres)
-             || (j==0)))
-	 { 
-	  CurrentLevel->NodalVanka(CurrentU, CurrentRhsU, CurrentAux, 
-                                   N_Parameters, Parameters,smoother,N_Levels);	
-	  // make sure CuurentU and Rhs are updated while returning from nodal vanka
-	  CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, res);               	  
-	  
-	  if (TDatabase::ParamDB->SC_VERBOSE >=2)          
-            OutPut("level 0: Vanka ite: " << j << " " << res << endl);
-
-          if (res > divfactor)
-	  {
-            OutPut("nodal Vanka : coarse grid solver diverged " <<  res <<  " j :: " << j << endl);
-            exit(4711);
-          }
+          // ======================	END OF CHECK DEFECT	===============
           
-          res2 = res;
-          // cout << "residual " << j << " " << res << endl;
-	  
-	  j++;
-          // maxit reached             
-          if(j>=maxit) break;
-        }
+            res2 = res = oldres;
+            divfactor *= res;
+            if (slc)
+      {
+          ii = N_DOF*SizeOfDouble;
+              memcpy(OldU, CurrentU, ii);
+              memcpy(CurrentOldDefU, CurrentAux, ii);
+            }
+            
+            
+            //	============	loop starts	=========================
+            
+            while (((res>TDatabase::ParamDB->SC_COARSE_RED_FACTOR_SADDLE*oldres)
+                || (j==0)))
+            { 
+              // apply smother
+              CurrentLevel->CellVanka(CurrentU, CurrentRhsU, CurrentAux,
+                                      N_Parameters, Parameters, smoother, N_Levels);         
         
-        if (TDatabase::ParamDB->SC_VERBOSE >=2)
-	{
-	  
-	  OutPut("smoother " << smoother <<"level 0 res after smoothing: "<< res 
-		 << " reduction " <<  res/oldres );
-          OutPut(" number of Vanka iters: " << j << endl);
-        }
+              // compute defect
+        // =================	DEFECT ROUTINE WILL UPDATE SOLUTION IN PARALLEL ======
         
-        if (slc)
-	{ 
-          alpha = CurrentLevel->StepLengthControl(CurrentU, OldU, CurrentOldDefU, 
-                              N_Parameters,Parameters);       
+              CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, res);// Required for stopping criteria
+              if (res > divfactor)
+              {
+                OutPut("mesh cell Vanka : coarse grid solver diverged " <<  res  <<  " j :: " << j << endl);
+                exit(4711);
+              }
+              res2 = res;
+              // cout << "residual " << j << " " << res << endl;
         
-          for (j=0;j<N_DOF;j++)
-            CurrentU[j] = OldU[j] + alpha *( CurrentU[j]-OldU[j]);
-        }
-        
-      break;
-
-      case 11 :
-        slc =0;
-        if (TDatabase::ParamDB->SC_STEP_LENGTH_CONTROL_ALL_SADDLE)
-          slc = 1;
-        else
-          if ((TDatabase::ParamDB->SC_STEP_LENGTH_CONTROL_FINE_SADDLE)
-                 &&(i==N_Levels-1))
-            slc = 1;
-  
-        maxit = TDatabase::ParamDB->SC_COARSE_MAXIT_SADDLE; // max # of iterations
-        
-        j = 0;
-
-        res2 = oldres = res;
-        
-	if (slc)
-	{
-          memcpy(OldU, CurrentU, N_DOF*SizeOfDouble);
-          memcpy(CurrentOldDefU, CurrentAux, N_DOF*SizeOfDouble);
-        }
-
-        // iterate
-        while (((res>TDatabase::ParamDB->SC_COARSE_RED_FACTOR_SADDLE*oldres)
-                && (res>0.1*TDatabase::ParamDB->SC_LIN_RES_NORM_MIN_SADDLE))
-               || (j==0))
-	{
-	  
-          // apply smother
-          CurrentLevel->BraessSarazin(CurrentU, CurrentDefectU, CurrentAux,
-                                      N_Parameters, Parameters,N_Levels);
-          j++;
-          // maxit reached             
-          if(j>=maxit) break;
-          // compute defect
-          CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, res);
-          if (res > divfactor)
-          {
-            OutPut("Braess-Sarazin : coarse grid solver diverged " <<  res  << endl);
-            exit(4711);
-          }
-          res2 = res;
-          // cout << "residual " << j << " " << res << endl;
-        }
-        
-        if (TDatabase::ParamDB->SC_VERBOSE >=2){
+        j++;	  
+              // maxit reached             
+              if(j>=maxit) break;
+            
+            }
+            
+            //===================	END OF OBTAINING SOLUTION	===============
+            
+            if (TDatabase::ParamDB->SC_VERBOSE >=2 )
+            {
+              OutPut("smoother " << smoother <<", level 0 res after smoothing: "<< res << " reduction " <<  res/oldres );
+              OutPut(" number of Vanka iters: " << j << endl);
+            }
+            
+            //=================	GET DEFECT	===============================
+            
+            if (slc)
+            { 
+              alpha = CurrentLevel->StepLengthControl(CurrentU, OldU, CurrentOldDefU,
+                                  N_Parameters,Parameters);       
           
-	  // compute defect
-          CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, res);
-          OutPut("level 0: number of Braess Sarazin iters: " << j << " " << res/oldres << endl);
-        }
+              for (j=0;j<N_DOF;j++)
+                CurrentU[j] = OldU[j] + alpha *( CurrentU[j]-OldU[j]);
+            }
+            //	==============	MAKE CHANGES AS PER STEP CONTROL	================
+            
+      // ==================		END OF COARSE GRID COMPUTATION 	===============       
         
-        if (slc)
-	{ 
-          alpha = CurrentLevel->StepLengthControl(CurrentU, 
-                                                  OldU, CurrentOldDefU,
-                                                  N_Parameters,Parameters);       
+        break;
+        
+        case 10:
+        case 20:
+        case 11:
+        case 21:
+        case 12:
+        case 22:
+        case 13:
+        case 23:
+            
+              //	==============		STEP-LENGTH-CONTROL	===============
       
-          for (j=0;j<N_DOF;j++)
-            CurrentU[j] = OldU[j] + alpha *( CurrentU[j]-OldU[j]);
-        }
-	#ifdef _MPI        
-	  break; 
-	  case 25:
-	  
-	   ((TNSE_MGLevel4*)CurrentLevel)->Par_Directsolve(CurrentU,CurrentRhsU);
-	   CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, res);
-	   
-	    break;
-	      case 15:
-	  
-	   ((TNSE_MGLevel4*)CurrentLevel)->gmres_solve(CurrentU,CurrentRhsU);
-	   CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, res);
-	   #endif
-      break;
+            slc = 0;
+            if (TDatabase::ParamDB->SC_STEP_LENGTH_CONTROL_ALL_SADDLE)
+              slc = 1;
+            else 
+              if ((TDatabase::ParamDB->SC_STEP_LENGTH_CONTROL_FINE_SADDLE)
+                    &&(i==N_Levels-1))
+                slc = 1;
+      
+        
+            maxit = TDatabase::ParamDB->SC_COARSE_MAXIT_SADDLE; // max # of iterations
+            j = 0;
 
-      default :
-        OutPut("coarse smoother not found !! Set SC_COARSE_SMOOTHER properly !! " << smoother);
-        OutPut(endl);
-        exit(4711);
-    }// end iterative solver
-    
-	    if(TDatabase::ParamDB->MG_DEBUG && rank==0)
-	    {	 
-	      printf("end of reached cycle %d %d \n",i,j);
-	    }
+            // ==================		START OF COARSE GRID COMPUTATION 	===============
+      
+          // ======================	CHECK DEFECT	===============
+            res2 = oldres = res ;
+            if (TDatabase::ParamDB->SC_VERBOSE>=2)
+            {
+              OutPut("smoother " <<smoother <<" , level 0 res before smoothing: " << oldres << endl);
+            }
+            
+          // ======================	END OF CHECK DEFECT	===============
+          
+            res2 = res = oldres;
+            divfactor *= res;
+            if (slc)
+      {
+          ii = N_DOF*SizeOfDouble;
+              memcpy(OldU, CurrentU, ii);
+              memcpy(CurrentOldDefU, CurrentAux, ii);
+            }
+            
+            
+            //	============	loop starts	=========================
+            
+            while (((res>TDatabase::ParamDB->SC_COARSE_RED_FACTOR_SADDLE*oldres)
+                || (j==0)))
+            { 
+                switch(smoother)
+                {
+        #ifdef _CUDA
+              #ifdef _MPI
+                #ifdef _HYBRID
+        case 10:
+        case 20:
+            cout<<"CellVanka_GPU"<<endl;
+            CurrentLevel->CellVanka_GPU(CurrentU, CurrentRhsU, CurrentAux,
+                                      N_Parameters, Parameters,smoother,CoarseSmooth, stream_smooth, d_ARowPtr1, d_AKCol1,
+                                      d_A11Entries1,  d_A12Entries1,  d_A13Entries1,
+                                      d_A21Entries1,  d_A22Entries1,  d_A23Entries1,
+                                      d_A31Entries1,  d_A32Entries1,  d_A33Entries1,
+                                      d_BTRowPtr1,   d_BTKCol1,
+                                      d_B1TEntries1,  d_B2TEntries1,  d_B3TEntries1,
+                                      d_BRowPtr1,   d_BKCol1,
+                                      d_B1Entries1,  d_B2Entries1,  d_B3Entries1);
+            j=maxit;
+            break;
+            
+        case 11:
+        case 21:
+    //         cout<<"CellVanka_CPU_GPU"<<endl;
+            CurrentLevel->CellVanka_CPU_GPU(CurrentU, CurrentRhsU, CurrentAux,
+                                      N_Parameters, Parameters,smoother,CoarseSmooth, NULL, NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL,
+         NULL, NULL, NULL);
+            j=maxit;
+            break;
+            
+        case 12:
+        case 22:
+    //         cout<<"CellVanka_Level_Split"<<endl;
+            CurrentLevel->CellVanka_Level_Split(CurrentU, CurrentRhsU, CurrentAux,
+                                      N_Parameters, Parameters,smoother,CoarseSmooth);
+            
+            j=maxit;
+            break;
+            
+        case 13:
+        case 23:
+    //         cout<<"CellVanka_Level_Split"<<endl;
+            CurrentLevel->CellVanka_Combo(CurrentU, CurrentRhsU, CurrentAux,
+                                      N_Parameters, Parameters,smoother,CoarseSmooth, NULL, NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL,
+         NULL, NULL, NULL);
+            
+            j=maxit;
+            break;
+        
+                #endif
+            #endif
+        #endif      
+                }
+        
+              // compute defect
+        // =================	DEFECT ROUTINE WILL UPDATE SOLUTION IN PARALLEL ======
+        
+              CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, res);// Required for stopping criteria
+              if (res > divfactor)
+              {
+                OutPut("mesh cell Vanka : coarse grid solver diverged " <<  res  <<  " j :: " << j << endl);
+                exit(4711);
+              }
+              res2 = res;
+              // cout << "residual " << j << " " << res << endl;
+        
+        j++;	  
+              // maxit reached             
+              if(j>=maxit) break;
+            
+            }
+            
+            //===================	END OF OBTAINING SOLUTION	===============
+            
+            if (TDatabase::ParamDB->SC_VERBOSE >=2 )
+            {
+              OutPut("smoother " << smoother <<", level 0 res after smoothing: "<< res << " reduction " <<  res/oldres );
+              OutPut(" number of Vanka iters: " << j << endl);
+            }
+            
+            //=================	GET DEFECT	===============================
+            
+            if (slc)
+            { 
+              alpha = CurrentLevel->StepLengthControl(CurrentU, OldU, CurrentOldDefU,
+                                  N_Parameters,Parameters);       
+          
+              for (j=0;j<N_DOF;j++)
+                CurrentU[j] = OldU[j] + alpha *( CurrentU[j]-OldU[j]);
+            }
+            //	==============	MAKE CHANGES AS PER STEP CONTROL	================
+            
+      // ==================		END OF COARSE GRID COMPUTATION 	=============== 
+      
+            
+        break;      
+        
+      //================	3,4 - NODAL-VANKA ITERATIVE SOLVERS	==========================
+      
+          case 3 :
+          case 4 :
+              cout<<"coarse smooth"<<endl;
+            slc =0;
+            if (TDatabase::ParamDB->SC_STEP_LENGTH_CONTROL_ALL_SADDLE)
+              slc = 1;
+            else
+              if ((TDatabase::ParamDB->SC_STEP_LENGTH_CONTROL_FINE_SADDLE)
+                    &&(i==N_Levels-1))
+                slc = 1;
+                
+            maxit = TDatabase::ParamDB->SC_COARSE_MAXIT_SADDLE; // max # of iterations
+            j = 0;
+        
+            oldres = res;
+            
+      if (TDatabase::ParamDB->SC_VERBOSE>=2)
+              OutPut("smoother " << smoother <<"level 0 res before smoothing: " << oldres << endl);
+      
+            if (slc)
+      {
+              memcpy(OldU, CurrentU, N_DOF*SizeOfDouble);
+              memcpy(CurrentOldDefU, CurrentAux, N_DOF*SizeOfDouble); // required for slc
+            }        	
+            // iterate
+            while (((res>TDatabase::ParamDB->SC_COARSE_RED_FACTOR_SADDLE*oldres)
+                || (j==0)))
+      { 
+        CurrentLevel->NodalVanka(CurrentU, CurrentRhsU, CurrentAux, 
+                                      N_Parameters, Parameters,smoother,N_Levels);	
+        // make sure CuurentU and Rhs are updated while returning from nodal vanka
+        CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, res);               	  
+        
+        if (TDatabase::ParamDB->SC_VERBOSE >=2)          
+                OutPut("level 0: Vanka ite: " << j << " " << res << endl);
+
+              if (res > divfactor)
+        {
+                OutPut("nodal Vanka : coarse grid solver diverged " <<  res <<  " j :: " << j << endl);
+                exit(4711);
+              }
+              
+              res2 = res;
+              // cout << "residual " << j << " " << res << endl;
+        
+        j++;
+              // maxit reached             
+              if(j>=maxit) break;
+            }
+            
+            if (TDatabase::ParamDB->SC_VERBOSE >=2)
+      {
+        
+        OutPut("smoother " << smoother <<"level 0 res after smoothing: "<< res 
+        << " reduction " <<  res/oldres );
+              OutPut(" number of Vanka iters: " << j << endl);
+            }
+            
+            if (slc)
+      { 
+              alpha = CurrentLevel->StepLengthControl(CurrentU, OldU, CurrentOldDefU, 
+                                  N_Parameters,Parameters);       
+            
+              for (j=0;j<N_DOF;j++)
+                CurrentU[j] = OldU[j] + alpha *( CurrentU[j]-OldU[j]);
+            }
+            
+          break;
+          
+        case 30:
+        case 40:
+        case 31:
+        case 41:
+        case 32:
+        case 42:
+            
+              //	==============		STEP-LENGTH-CONTROL	===============
+      
+            slc = 0;
+            if (TDatabase::ParamDB->SC_STEP_LENGTH_CONTROL_ALL_SADDLE)
+              slc = 1;
+            else 
+              if ((TDatabase::ParamDB->SC_STEP_LENGTH_CONTROL_FINE_SADDLE)
+                    &&(i==N_Levels-1))
+                slc = 1;
+      
+        
+            maxit = TDatabase::ParamDB->SC_COARSE_MAXIT_SADDLE; // max # of iterations
+            j = 0;
+
+            // ==================		START OF COARSE GRID COMPUTATION 	===============
+      
+          // ======================	CHECK DEFECT	===============
+            res2 = oldres = res ;
+            if (TDatabase::ParamDB->SC_VERBOSE>=2)
+            {
+              OutPut("smoother " <<smoother <<" , level 0 res before smoothing: " << oldres << endl);
+            }
+            
+          // ======================	END OF CHECK DEFECT	===============
+          
+            res2 = res = oldres;
+            divfactor *= res;
+            if (slc)
+      {
+          ii = N_DOF*SizeOfDouble;
+              memcpy(OldU, CurrentU, ii);
+              memcpy(CurrentOldDefU, CurrentAux, ii);
+            }
+            
+            
+            //	============	loop starts	=========================
+            
+            while (((res>TDatabase::ParamDB->SC_COARSE_RED_FACTOR_SADDLE*oldres)
+                || (j==0)))
+            { 
+                switch(smoother)
+                {
+        #ifdef _CUDA
+              #ifdef _MPI
+                #ifdef _HYBRID
+        case 30:
+        case 40:
+    //         cout<<"CellVanka_GPU"<<endl;
+            CurrentLevel->NodalVanka_GPU(CurrentU, CurrentRhsU, CurrentAux,
+                                      N_Parameters, Parameters,smoother,CoarseSmooth);
+            j=maxit;
+            break;
+            
+        case 31:
+        case 41:
+    //         cout<<"CellVanka_CPU_GPU"<<endl;
+            CurrentLevel->NodalVanka_CPU_GPU(CurrentU, CurrentRhsU, CurrentAux,
+                                      N_Parameters, Parameters,smoother,CoarseSmooth);
+            j=maxit;
+            break;
+            
+        case 32:
+        case 42:
+    //         cout<<"CellVanka_Level_Split"<<endl;
+            CurrentLevel->NodalVanka_Level_Split(CurrentU, CurrentRhsU, CurrentAux,
+                                      N_Parameters, Parameters,smoother,CoarseSmooth);
+            
+            j=maxit;
+            break;
+        
+                #endif
+            #endif
+        #endif      
+                }
+        
+              // compute defect
+        // =================	DEFECT ROUTINE WILL UPDATE SOLUTION IN PARALLEL ======
+        
+              CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, res);// Required for stopping criteria
+              if (res > divfactor)
+              {
+                OutPut("mesh cell Vanka : coarse grid solver diverged " <<  res  <<  " j :: " << j << endl);
+                exit(4711);
+              }
+              res2 = res;
+              // cout << "residual " << j << " " << res << endl;
+        
+        j++;	  
+              // maxit reached             
+              if(j>=maxit) break;
+            
+            }
+            
+            //===================	END OF OBTAINING SOLUTION	===============
+            
+            if (TDatabase::ParamDB->SC_VERBOSE >=2 )
+            {
+              OutPut("smoother " << smoother <<", level 0 res after smoothing: "<< res << " reduction " <<  res/oldres );
+              OutPut(" number of Vanka iters: " << j << endl);
+            }
+            
+            //=================	GET DEFECT	===============================
+            
+            if (slc)
+            { 
+              alpha = CurrentLevel->StepLengthControl(CurrentU, OldU, CurrentOldDefU,
+                                  N_Parameters,Parameters);       
+          
+              for (j=0;j<N_DOF;j++)
+                CurrentU[j] = OldU[j] + alpha *( CurrentU[j]-OldU[j]);
+            }
+            //	==============	MAKE CHANGES AS PER STEP CONTROL	================
+            
+      // ==================		END OF COARSE GRID COMPUTATION 	=============== 
+      
+            
+        break;   
+        
+
+          case 5 :
+            slc =0;
+            if (TDatabase::ParamDB->SC_STEP_LENGTH_CONTROL_ALL_SADDLE)
+              slc = 1;
+            else
+              if ((TDatabase::ParamDB->SC_STEP_LENGTH_CONTROL_FINE_SADDLE)
+                    &&(i==N_Levels-1))
+                slc = 1;
+      
+            maxit = TDatabase::ParamDB->SC_COARSE_MAXIT_SADDLE; // max # of iterations
+            
+            j = 0;
+
+            res2 = oldres = res;
+            
+      if (slc)
+      {
+              memcpy(OldU, CurrentU, N_DOF*SizeOfDouble);
+              memcpy(CurrentOldDefU, CurrentAux, N_DOF*SizeOfDouble);
+            }
+
+            // iterate
+            while (((res>TDatabase::ParamDB->SC_COARSE_RED_FACTOR_SADDLE*oldres)
+                    && (res>0.1*TDatabase::ParamDB->SC_LIN_RES_NORM_MIN_SADDLE))
+                  || (j==0))
+      {
+        
+              // apply smother
+              CurrentLevel->BraessSarazin(CurrentU, CurrentDefectU, CurrentAux,
+                                          N_Parameters, Parameters,N_Levels);
+              j++;
+              // maxit reached             
+              if(j>=maxit) break;
+              // compute defect
+              CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, res);
+              if (res > divfactor)
+              {
+                OutPut("Braess-Sarazin : coarse grid solver diverged " <<  res  << endl);
+                exit(4711);
+              }
+              res2 = res;
+              // cout << "residual " << j << " " << res << endl;
+            }
+            
+            if (TDatabase::ParamDB->SC_VERBOSE >=2){
+              
+        // compute defect
+              CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, res);
+              OutPut("level 0: number of Braess Sarazin iters: " << j << " " << res/oldres << endl);
+            }
+            
+            if (slc)
+      { 
+              alpha = CurrentLevel->StepLengthControl(CurrentU, 
+                                                      OldU, CurrentOldDefU,
+                                                      N_Parameters,Parameters);       
+          
+              for (j=0;j<N_DOF;j++)
+                CurrentU[j] = OldU[j] + alpha *( CurrentU[j]-OldU[j]);
+            }
+      #ifdef _MPI        
+        break; 
+        case 25:
+        
+        ((TNSE_MGLevel4*)CurrentLevel)->Par_Directsolve(CurrentU,CurrentRhsU);
+        CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, res);
+        
+          break;
+            case 15:
+        
+        ((TNSE_MGLevel4*)CurrentLevel)->gmres_solve(CurrentU,CurrentRhsU);
+        CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, res);
+        #endif
+          break;
+
+          default :
+            OutPut("coarse smoother not found !! Set SC_COARSE_SMOOTHER properly !! " << smoother);
+            OutPut(endl);
+            exit(4711);
+        }// end iterative solver
+
+        #ifdef _MPI
+          t2 = MPI_Wtime();
+        #else
+          t2 = GetTime();
+        #endif
+
+        tSmoother2 += t2-t1 ;
+        
+          if(TDatabase::ParamDB->MG_DEBUG && rank==0)
+          {	 
+            printf("end of reached cycle %d %d \n",i,j);
+          }
   } // end coarsest grid
  
  // ===============	END OF - HANDLE THE SPECIAL CASE OF COARSEST LEVEL	===================//  
@@ -584,19 +1182,86 @@ if(TDatabase::ParamDB->MG_DEBUG && rank==0)
     smoother = TDatabase::ParamDB->SC_SMOOTHER_SADDLE;
 //     if(i!=N_Levels-1)
 //       smoother = 4;
+
+    #ifdef _MPI
+          t1 = MPI_Wtime();
+        #else
+          t1 = GetTime();
+        #endif
+
+        
     switch(smoother)
     {
       case 1 :
       case 2 :
         for(j=0;j<TDatabase::ParamDB->SC_PRE_SMOOTH_SADDLE;j++)
 	{
+          
           CurrentLevel->CellVanka(CurrentU, CurrentRhsU, CurrentAux,
                                   N_Parameters, Parameters,smoother,N_Levels);  
 	}
+	break;
+    
+    #ifdef _CUDA
+          #ifdef _MPI
+            #ifdef _HYBRID
+    case 10:
+    case 20:
+         cout<<"CellVanka_GPU"<<endl;
+        CurrentLevel->CellVanka_GPU(CurrentU, CurrentRhsU, CurrentAux,
+                                  N_Parameters, Parameters,smoother,PreSmooth, stream_smooth, d_ARowPtr1, d_AKCol1,
+                                  d_A11Entries1,  d_A12Entries1,  d_A13Entries1,
+                                  d_A21Entries1,  d_A22Entries1,  d_A23Entries1,
+                                  d_A31Entries1,  d_A32Entries1,  d_A33Entries1,
+                                  d_BTRowPtr1,   d_BTKCol1,
+                                  d_B1TEntries1,  d_B2TEntries1,  d_B3TEntries1,
+                                  d_BRowPtr1,   d_BKCol1,
+                                  d_B1Entries1,  d_B2Entries1,  d_B3Entries1);
         break;
+        
+    case 11:
+    case 21:
+//         cout<<"CellVanka_CPU_GPU"<<endl;
+        CurrentLevel->CellVanka_CPU_GPU(CurrentU, CurrentRhsU, CurrentAux,
+                                  N_Parameters, Parameters,smoother,PreSmooth, NULL, NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL,
+         NULL, NULL, NULL);
+        break;
+        
+    case 12:
+    case 22:
+//         cout<<"CellVanka_Level_Split"<<endl;
+        CurrentLevel->CellVanka_Level_Split(CurrentU, CurrentRhsU, CurrentAux,
+                                  N_Parameters, Parameters,smoother,PreSmooth);
+        break;
+        
+    case 13:
+    case 23:
+//         cout<<"CellVanka_Level_Split"<<endl;
+        CurrentLevel->CellVanka_Combo(CurrentU, CurrentRhsU, CurrentAux,
+                                  N_Parameters, Parameters,smoother,PreSmooth, NULL, NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL,
+         NULL, NULL, NULL);
+        break;
+    
+            #endif
+        #endif
+    #endif
+	
+        
       case 3 :
       case 4 :  	
-	
+	cout<<"pre smooth"<<endl;
         for(j=0;j<TDatabase::ParamDB->SC_PRE_SMOOTH_SADDLE;j++)
 	{	  
 	  CurrentLevel->NodalVanka(CurrentU, CurrentRhsU, CurrentAux, 
@@ -604,7 +1269,37 @@ if(TDatabase::ParamDB->MG_DEBUG && rank==0)
 	}
 	
          break;
-      case 11 :         
+         
+#ifdef _CUDA
+    #ifdef _MPI
+        #ifdef _HYBRID
+    case 30:
+    case 40:
+//         cout<<"CellVanka_GPU"<<endl;
+        CurrentLevel->NodalVanka_GPU(CurrentU, CurrentRhsU, CurrentAux,
+                                  N_Parameters, Parameters,smoother,PreSmooth);
+        break;
+        
+    case 31:
+    case 41:
+//         cout<<"CellVanka_CPU_GPU"<<endl;
+        CurrentLevel->NodalVanka_CPU_GPU(CurrentU, CurrentRhsU, CurrentAux,
+                                  N_Parameters, Parameters,smoother,PreSmooth);
+        break;
+        
+    case 32:
+    case 42:
+//         cout<<"CellVanka_Level_Split"<<endl;
+        CurrentLevel->NodalVanka_Level_Split(CurrentU, CurrentRhsU, CurrentAux,
+                                  N_Parameters, Parameters,smoother,PreSmooth);
+        break;
+    
+        #endif
+    #endif
+#endif
+        
+         
+      case 5 :         
         if (!defect_calc)
           CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, oldres);        
         oldres = sqrt(Ddot(2*N_UDOF, CurrentU,CurrentU));
@@ -632,6 +1327,14 @@ if(TDatabase::ParamDB->MG_DEBUG && rank==0)
         Error("smoother not found !! Set SC_SMOOTHER properly !!"<< endl);
         exit(4711);
     }
+
+    #ifdef _MPI
+          t2 = MPI_Wtime();
+    #else
+          t2 = GetTime();
+    #endif
+
+        tSmoother2 += t2-t1 ;
     
     //==========	END OF PRE-SMOOTHING 	================================// 
     CurrentLevel->CorrectNodes(CurrentU); // Required only for hanging case
@@ -753,11 +1456,26 @@ if(TDatabase::ParamDB->MG_DEBUG && rank==0 )
 									  
     // ========		CALL NEXT LEVEL IN MULTIGRID CYCLE 	=============== //
     
-    for(j=0;j<mg_recursions[i];j++)
+    for(j=0;j<1;j++)
       Cycle(i-1, res);
     /* F--cycle */
 
-    
+    //     if(rank==0){
+    // cout<<"norm1:"<<res<<"\t"<<i<<endl;
+    // cout<<"CurrentU:"<<cblas_dnrm2(GEO_DIM*N_UDOF,CurrentU,1)<<endl;
+    // cout<<"CurrentP:"<<cblas_dnrm2(N_PDOF,CurrentP,1)<<endl;
+    // cout<<"CurrentRhsU:"<<cblas_dnrm2(GEO_DIM*N_UDOF,CurrentRhsU,1)<<endl;
+    // cout<<"CurrentRhsP:"<<cblas_dnrm2(N_PDOF,CurrentRhsP,1)<<endl;
+    // cout<<"CurrentDefectU:"<<cblas_dnrm2(GEO_DIM*N_UDOF,CurrentDefectU,1)<<endl;
+    // cout<<"CurrentDefectP:"<<cblas_dnrm2(N_PDOF,CurrentDefectP,1)<<endl;
+    // cout<<"CurrentAux:"<<cblas_dnrm2(GEO_DIM*N_UDOF,CurrentAux,1)<<endl;
+    // cout<<"CoarserU:"<<cblas_dnrm2(N_coarse_DOF,CoarserU,1)<<endl;
+    // cout<<"CoarserRhsU:"<<cblas_dnrm2(N_coarse_DOF,CoarserRhsU,1)<<endl;
+    // cout<<"norm3:"<<res<<"\t"<<i<<endl;
+    // }
+
+
+
     if (TDatabase::ParamDB->SC_MG_CYCLE_SADDLE<1) mg_recursions[i] = 1;
 
     // ==========	END OF COARSE GRID COMPUATION 	===================	//
@@ -824,12 +1542,29 @@ if(TDatabase::ParamDB->MG_DEBUG && rank==0)
       printf("---------	End of prolongation Level :: %d		------------\n",i);
     }
     
+    
+
     // update dofs
     CurrentLevel->CorrectNodes(CurrentDefectU); // Remove updates for Dirichlet RHS
     CurrentLevel->Update(CurrentU, CurrentDefectU); // Add to U 
     CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, res);
  // ===============		PROLONGATE SOLUTION TO FINER LEVEL	=============== //  
     
+
+    // if(rank==0){
+    // cout<<"norm1:"<<res<<"\t"<<i<<endl;
+    // cout<<"CurrentU:"<<cblas_dnrm2(GEO_DIM*N_UDOF,CurrentU,1)<<endl;
+    // cout<<"CurrentP:"<<cblas_dnrm2(N_PDOF,CurrentP,1)<<endl;
+    // cout<<"CurrentRhsU:"<<cblas_dnrm2(GEO_DIM*N_UDOF,CurrentRhsU,1)<<endl;
+    // cout<<"CurrentRhsP:"<<cblas_dnrm2(N_PDOF,CurrentRhsP,1)<<endl;
+    // cout<<"CurrentDefectU:"<<cblas_dnrm2(GEO_DIM*N_UDOF,CurrentDefectU,1)<<endl;
+    // cout<<"CurrentDefectP:"<<cblas_dnrm2(N_PDOF,CurrentDefectP,1)<<endl;
+    // cout<<"CurrentAux:"<<cblas_dnrm2(GEO_DIM*N_UDOF,CurrentAux,1)<<endl;
+    // cout<<"norm3:"<<res<<"\t"<<i<<endl;
+    // }
+
+        
+
     // apply step length control for prolongation
     if(slc)
     {
@@ -862,6 +1597,14 @@ if(TDatabase::ParamDB->MG_DEBUG && rank==0)
  
 //  if(i!=N_Levels-1)
 //    smoother = 4;
+
+      #ifdef _MPI
+          t1 = MPI_Wtime();
+        #else
+          t1 = GetTime();
+        #endif
+
+        
     switch(smoother)
     {
       case 1 :
@@ -873,18 +1616,104 @@ if(TDatabase::ParamDB->MG_DEBUG && rank==0)
 	}
 	
         break;
+    #ifdef _CUDA
+          #ifdef _MPI
+            #ifdef _HYBRID
+    case 10:
+    case 20:
+         cout<<"CellVanka_GPU"<<endl;
+        CurrentLevel->CellVanka_GPU(CurrentU, CurrentRhsU, CurrentAux,
+                                  N_Parameters, Parameters,smoother,PostSmooth, stream_smooth, d_ARowPtr1, d_AKCol1,
+                                  d_A11Entries1,  d_A12Entries1,  d_A13Entries1,
+                                  d_A21Entries1,  d_A22Entries1,  d_A23Entries1,
+                                  d_A31Entries1,  d_A32Entries1,  d_A33Entries1,
+                                  d_BTRowPtr1,   d_BTKCol1,
+                                  d_B1TEntries1,  d_B2TEntries1,  d_B3TEntries1,
+                                  d_BRowPtr1,   d_BKCol1,
+                                  d_B1Entries1,  d_B2Entries1,  d_B3Entries1);
+        break;
+        
+    case 11:
+    case 21:
+        
+//         cout<<"CellVanka_CPU_GPU"<<endl;
+        CurrentLevel->CellVanka_CPU_GPU(CurrentU, CurrentRhsU, CurrentAux,
+                                  N_Parameters, Parameters,smoother,PostSmooth, NULL, NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL,
+         NULL, NULL, NULL);
+        break;
+        
+    case 12:
+    case 22:
+//         cout<<"CellVanka_Level_Split"<<endl;
+        CurrentLevel->CellVanka_Level_Split(CurrentU, CurrentRhsU, CurrentAux,
+                                  N_Parameters, Parameters,smoother,PostSmooth);
+        break;
+        
+    case 13:
+    case 23:
+//         cout<<"CellVanka_Level_Split"<<endl;
+        CurrentLevel->CellVanka_Combo(CurrentU, CurrentRhsU, CurrentAux,
+                                  N_Parameters, Parameters,smoother,PostSmooth, NULL, NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL,
+         NULL, NULL, NULL,
+         NULL, NULL,
+         NULL, NULL, NULL);
+        break;
+    
+            #endif
+        #endif
+    #endif
       case 3 :
       case 4 :  
-	
+	cout<<"post smooth"<<endl;
 
         for(j=0;j<TDatabase::ParamDB->SC_POST_SMOOTH_SADDLE;j++)
 	{          
 	  CurrentLevel->NodalVanka(CurrentU, CurrentRhsU, CurrentAux, 
                                     N_Parameters, Parameters,smoother,N_Levels);       	  
 	}
-	
+	break;
+
+#ifdef _CUDA
+    #ifdef _MPI
+        #ifdef _HYBRID
+        
+    case 30:
+    case 40:
+//         cout<<"CellVanka_GPU"<<endl;
+        CurrentLevel->NodalVanka_GPU(CurrentU, CurrentRhsU, CurrentAux,
+                                  N_Parameters, Parameters,smoother,PostSmooth);
         break;
-      case 11 :  
+        
+    case 31:
+    case 41:
+//         cout<<"CellVanka_CPU_GPU"<<endl;
+        CurrentLevel->NodalVanka_CPU_GPU(CurrentU, CurrentRhsU, CurrentAux,
+                                  N_Parameters, Parameters,smoother,PostSmooth);
+        break;
+        
+    case 32:
+    case 42:
+//         cout<<"CellVanka_Level_Split"<<endl;
+        CurrentLevel->NodalVanka_Level_Split(CurrentU, CurrentRhsU, CurrentAux,
+                                  N_Parameters, Parameters,smoother,PostSmooth);
+        break;
+    
+        #endif
+    #endif
+#endif
+        
+        break;
+      case 5 :  
         // compute defect
         if (!defect_calc) 
           CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, oldres);
@@ -911,6 +1740,14 @@ if(TDatabase::ParamDB->MG_DEBUG && rank==0)
         Error("smoother not found !! Set SC_SMOOTHER properly !!"<< endl);
         exit(4711);
     }
+
+    #ifdef _MPI
+          t2 = MPI_Wtime();
+        #else
+          t2 = GetTime();
+        #endif
+
+        tSmoother2 += t2-t1 ;
  //	===========	END OF POST SMOOTHING COMPUTATION 	=================== //
 
     CurrentLevel->Defect(CurrentU, CurrentRhsU, CurrentDefectU, res);

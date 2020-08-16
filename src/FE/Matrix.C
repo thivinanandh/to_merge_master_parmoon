@@ -1,3 +1,29 @@
+/** ==========================================================================
+#    This file is part of the finite element software ParMooN.
+# 
+#    ParMooN (cmg.cds.iisc.ac.in/parmoon) is a free finite element software  
+#    developed by the research groups of Prof. Sashikumaar Ganesan (IISc, Bangalore),
+#    Prof. Volker John (WIAS Berlin) and Prof. Gunar Matthies (TU-Dresden):
+#
+#    ParMooN is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU Affero General Public License as
+#    published by the Free Software Foundation, either version 3 of the
+#    License, or (at your option) any later version.
+#
+#    ParMooN is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU Affero General Public License for more details.
+#
+#    You should have received a copy of the GNU Affero General Public License
+#    along with ParMooN.  If not, see <http://www.gnu.org/licenses/>.
+#
+#    If your company is selling a software using ParMooN, please consider 
+#    the option to obtain a commercial license for a fee. Please send 
+#    corresponding requests to sashi@iisc.ac.in
+
+# =========================================================================*/ 
+   
 // =======================================================================
 // @(#)Matrix.C        1.2 11/20/98
 // 
@@ -32,6 +58,51 @@ TMatrix::TMatrix(TStructure *structure, double* Entries)
   this->Entries = Entries;
 }
 
+void TMatrix::SetMklMatrix(int N_Active)
+{
+  	mkl_sqmatrix_status = mkl_sparse_d_create_csr(&mkl_sqmatrixA,SPARSE_INDEX_BASE_ZERO,
+												 structure->GetN_Columns(),structure->GetN_Columns(),structure->GetRowPtr(),structure->GetRowPtr()+1,structure->GetKCol(),Entries);
+    if(mkl_sqmatrix_status == SPARSE_STATUS_SUCCESS)
+    {
+      std::cout<< "Matrix is created" <<std::endl;
+    }
+
+    //mkl_sqmatrix_status = mkl_sparse_order(mkl_sqmatrixA);
+    mkl_des.type = SPARSE_MATRIX_TYPE_GENERAL;
+
+    mkl_diagonal = new double[N_Active];
+    mkl_helper   = new double[structure->GetN_Columns()];
+
+    int* row_ptr = structure->GetRowPtr();
+    int* Col_Index = structure->GetKCol();
+    for(int i = 0;i < N_Active;i++)
+    {
+      for(int j = row_ptr[i];j < row_ptr[i+1];j++)
+      {
+        if(Col_Index[j]==i)
+        {
+          mkl_diagonal[i] = Entries[j];
+          break;
+        }
+      }
+    }
+}
+
+sparse_matrix_t TMatrix::GetMklMatrix()
+{
+  return mkl_sqmatrixA;
+}
+
+double* TMatrix::GetMklHelper()
+{
+  return mkl_helper;
+}
+
+double* TMatrix::GetMklDiagonal()
+{
+  return mkl_diagonal;
+}
+
 TMatrix::TMatrix(int nRows, int nCols)
 {
   structure = new TStructure(nRows,nCols);
@@ -55,6 +126,9 @@ void TMatrix::Reset()
 TMatrix::~TMatrix()
 {
   delete [] Entries;
+  delete [] mkl_helper;
+  delete [] mkl_diagonal;
+  mkl_sparse_destroy(mkl_sqmatrixA);
 }
 
 

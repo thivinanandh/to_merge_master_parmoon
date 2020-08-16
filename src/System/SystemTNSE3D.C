@@ -1,3 +1,29 @@
+/** ==========================================================================
+#    This file is part of the finite element software ParMooN.
+# 
+#    ParMooN (cmg.cds.iisc.ac.in/parmoon) is a free finite element software  
+#    developed by the research groups of Prof. Sashikumaar Ganesan (IISc, Bangalore),
+#    Prof. Volker John (WIAS Berlin) and Prof. Gunar Matthies (TU-Dresden):
+#
+#    ParMooN is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU Affero General Public License as
+#    published by the Free Software Foundation, either version 3 of the
+#    License, or (at your option) any later version.
+#
+#    ParMooN is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU Affero General Public License for more details.
+#
+#    You should have received a copy of the GNU Affero General Public License
+#    along with ParMooN.  If not, see <http://www.gnu.org/licenses/>.
+#
+#    If your company is selling a software using ParMooN, please consider 
+#    the option to obtain a commercial license for a fee. Please send 
+#    corresponding requests to sashi@iisc.ac.in
+
+# =========================================================================*/ 
+   
 /** ************************************************************************ 
 * @brief     source file for TSystemTNSE2D
 * @author    Sashikumaar Ganesan, 
@@ -759,7 +785,7 @@ void TSystemTNSE3D::Init(CoeffFct3D *lincoeffs, BoundCondFunct3D *BoundCond, Bou
                                              velocity_space_code, pressure_space_code,
                                              NULL, NULL		
 #ifdef _MPI
-	  , ParComm_U[i], ParComm_P[i]
+	  , ParComm_U[i], ParComm_P[i], ParMapper_P[i]
 #endif	
 		
 	      );
@@ -809,8 +835,6 @@ void TSystemTNSE3D::Assemble()
       N_DirichletDof = N_U_Current - N_Active_Current;
       N_P_Current = P_Space[i]->GetN_DegreesOfFreedom();      
       
-      
-      
       // initialize matrices
       AMatRhsAssemble[i]->Reset();
       
@@ -827,7 +851,7 @@ void TSystemTNSE3D::Assemble()
    
       /** assemble */
       AMatRhsAssemble[i]->Assemble3D();
-    cout<< "rhs: " << Ddot(3*N_U_Current, RhsArray[i], RhsArray[i])<<endl;
+
       fefct[0] = Velocity[i]->GetComponent(0);
       fefct[1] = Velocity[i]->GetComponent(1);
       fefct[2] = Velocity[i]->GetComponent(2);
@@ -904,12 +928,12 @@ void TSystemTNSE3D::Assemble()
         } //  if (TDatabase::ParamDB->INTERNAL_SLIP_WITH_FRIC
 
 // //       delete NSEaux;   
-    cout<< "rhs: " << Ddot(3*N_U_Current, RhsArray[i], RhsArray[i])<<endl;
+    
       // set rhs for Dirichlet nodes
       memcpy(SolArray[i]+N_Active_Current, RhsArray[i]+N_Active_Current, N_DirichletDof*SizeOfDouble);
       memcpy(SolArray[i]+N_U_Current+N_Active_Current, RhsArray[i]+N_U_Current+N_Active_Current, N_DirichletDof*SizeOfDouble); 
       memcpy(SolArray[i]+2*N_U_Current+N_Active_Current, RhsArray[i]+2*N_U_Current+N_Active_Current, N_DirichletDof*SizeOfDouble);     
-    cout<< "Sol arr: " << Ddot(3*N_U_Current, SolArray[i], SolArray[i])<<endl;
+
 #ifdef __PRIVATE__   
     if (Disctype == VMS_PROJECTION)
     {     
@@ -1462,7 +1486,8 @@ void TSystemTNSE3D::Solve(double *sol)
 void TSystemTNSE3D::RestoreMassMat()
 {
   int i;
-     if(SystMatAssembled)
+  
+   if(SystMatAssembled)
    {
     // restore the mass matrix
     for(i=Start_Level;i<N_Levels;i++)  
@@ -1471,7 +1496,7 @@ void TSystemTNSE3D::RestoreMassMat()
       {
        case 1:
        case 2:
-         MatAdd(SqmatrixM11[i], SqmatrixA11[i], -gamma); 
+         MatAdd(SqmatrixM11[i], SqmatrixA11[i], -gamma);    
        break;
 
        case 3:
@@ -1504,7 +1529,7 @@ void TSystemTNSE3D::RestoreMassMat()
 void TSystemTNSE3D::RestoreMassMatNonLinear()
 {
   int i;
-  cout << "Restore mass matrix entered" << endl;
+  
    if(SystMatAssembled)
    {
     // restore the mass matrix
@@ -1521,8 +1546,7 @@ void TSystemTNSE3D::RestoreMassMatNonLinear()
        case 4:    
          MatAdd(SqmatrixM11[i], SqmatrixA11[i], -gamma);
          MatAdd(SqmatrixM22[i], SqmatrixA22[i], -gamma); 
-         MatAdd(SqmatrixM33[i], SqmatrixA33[i], -gamma);      
-         cout<< "restore mass matrix - case 4 " << endl;
+         MatAdd(SqmatrixM33[i], SqmatrixA33[i], -gamma);         
         break;
        } // switch(NSETyp     
       } //for(i=Start_Level;i<N_Levels-1;i++)  
@@ -2254,4 +2278,3 @@ myfile.open(str);
 myfile.close();
 
 }
-

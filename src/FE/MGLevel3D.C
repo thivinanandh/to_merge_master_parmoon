@@ -16,6 +16,9 @@
 #include <LinAlg.h>
 #include <MooNMD_Io.h>
 #include <FEFunction3D.h>
+#include <mkl.h>
+#include <omp.h>
+#include <cuda_runtime.h>
 
 #ifdef _MPI 
 #include <ParFECommunicator3D.h>
@@ -25,6 +28,16 @@
 #include <string.h>
 
 
+#define CUDA_CHECK(call) \
+do {\
+            cudaError_t err = call;\
+            if (cudaSuccess != err) \
+            {\
+                std::cerr << "CUDA error in " << __FILE__ << "(" << __LINE__ << "): " \
+                    << cudaGetErrorString(err) << std::endl;\
+                exit(EXIT_FAILURE);\
+            }\
+        } while(0)
 
 #define PreSmooth -1
 #define CoarseSmooth 0
@@ -35,7 +48,7 @@
 double tSor=0.0;
 double tD=0.0,tS=0.0;
 
-/** constructor */
+/* constructor **/
 TMGLevel3D::TMGLevel3D(int level, TSquareMatrix3D *a,
                        double *rhs, double *sol, int n_aux,
                        int *permutation)
@@ -65,6 +78,13 @@ TMGLevel3D::TMGLevel3D(int level, TSquareMatrix3D *a,
   KCol = a->GetKCol();
   Entries = a->GetEntries();
 
+#ifdef _CUDA
+  CUDA_CHECK(cudaHostRegister(RowPtr, (A->GetN_Rows()+1) * sizeof(int), cudaHostRegisterPortable));
+
+  CUDA_CHECK(cudaHostRegister(Entries, A->GetN_Entries() * sizeof(double), cudaHostRegisterPortable));
+
+  CUDA_CHECK(cudaHostRegister(KCol, A->GetN_Entries() * sizeof(int), cudaHostRegisterPortable));
+#endif
   Rhs = rhs;
   X = sol;
 
@@ -111,7 +131,14 @@ TMGLevel3D::TMGLevel3D(int level, TSquareMatrix3D *a, double *rhs, double *sol,
   RowPtr = a->GetRowPtr();
   KCol = a->GetKCol();
   Entries = a->GetEntries();
+  
+  #ifdef _CUDA
+  CUDA_CHECK(cudaHostRegister(RowPtr, (A->GetN_Rows()+1) * sizeof(int), cudaHostRegisterPortable));
 
+  CUDA_CHECK(cudaHostRegister(Entries, A->GetN_Entries() * sizeof(double), cudaHostRegisterPortable));
+
+  CUDA_CHECK(cudaHostRegister(KCol, A->GetN_Entries() * sizeof(int), cudaHostRegisterPortable));
+  #endif
   Rhs = rhs;
   X = sol;
 
@@ -443,7 +470,8 @@ void TMGLevel3D::SSOR(double *sol, double *f, double *aux,
 void TMGLevel3D::Jacobi(double *sol, double *f, double *aux,
         int N_Parameters, double *Parameters)
 {
-  int i,j,k,l,index;
+  //cout<<"jacobi CPU"<<endl;
+      int i,j,k,l,index;
   double t, s, diag, omega;
 
   omega = Parameters[0];
@@ -490,49 +518,81 @@ void TMGLevel3D::Jacobi(double *sol, double *f, double *aux,
   memcpy(sol+HangingNodeBound, f+HangingNodeBound, 
            N_Dirichlet*SizeOfDouble);
 
-  // set active nodes
-  j = RowPtr[0];
-  for(i=0;i<N_Active;i++)
-  {
-#ifdef _MPI
-    if(master[i] != rank)
-      continue;
-#endif
-    s = f[i];
-    k = RowPtr[i+1];
-    for(j = RowPtr[i];j<k;j++)
-    {
-      index = KCol[j];
-      if(index == i)
-        diag = Entries[j];
-      else
-        s -= Entries[j] * aux[index];
-    } // endfor j
-    t = aux[i];
-    sol[i] = (1-omega)*t + omega*s/diag;
-  } // endfor i
+  mkl_set_num_threads(TDatabase::ParamDB->OMPNUMTHREADS);
+  mkl_set_dynamic(false);
+  omp_set_num_threads(TDatabase::ParamDB->OMPNUMTHREADS);
+  double* helper = A->GetMklHelper();
+  double* diag1  = A->GetMklDiagonal();
+  matrix_descr des;
+  des.type = SPARSE_MATRIX_TYPE_GENERAL;
 
-  // set hanging nodes 
-  j = RowPtr[N_Active];
-  for(i=N_Active;i<HangingNodeBound;i++)
+
+  //Jacobi Iteration
+  sparse_status_t status = mkl_sparse_d_mv(SPARSE_OPERATION_NON_TRANSPOSE,1.0,A->GetMklMatrix(),des,aux,0.0,helper);
+  if(status != SPARSE_STATUS_SUCCESS)
   {
-   // printf("yes\n");
-#ifdef _MPI
-    if(master[i] != rank)
-      continue;
-#endif
-    s = f[i];
-    k = RowPtr[i+1];
-    for(j = RowPtr[i];j<k;j++)
-    {
-      index = KCol[j];
-      if(index != i)
-        s -= Entries[j] * sol[index];
-      else
-        diag = Entries[j];
-    } // endfor j
-    sol[i] = s/diag;
-  } // endfor i
+    std::cout<< "Jacobi SpMV not successful" <<std::endl;
+  }
+
+  cblas_daxpby(N_Active,1.0,f,1,-1.0,helper,1);
+  
+  #pragma omp parallel for simd 
+  for(int i = 0; i < N_Active;i++)
+  {
+    helper[i] /= diag1[i];
+  }
+  
+  cblas_daxpby(N_Active,omega,helper,1,1.0,sol,1);
+  
+
+//   // set active nodes
+//   j = RowPtr[0];
+
+//   // #ifdef _HYBRID
+//   // omp_set_num_threads(TDatabase::ParamDB->OMPNUMTHREADS);
+//   // #endif
+//   // #pragma omp parallel for private(s,k,diag,j,index,t) 
+//   for(int i=0;i<N_Active;i++)
+//   {
+//     // cout<<"threads:"<<omp_get_num_threads()<<endl;
+//     #ifdef _MPI
+//         if(master[i] != rank)
+//           continue;
+//     #endif
+//     s = f[i];
+//     k = RowPtr[i+1];
+//     for(j = RowPtr[i];j<k;j++)
+//     {
+//       index = KCol[j];
+//       if(index == i)
+//         diag = Entries[j];
+//       s -= Entries[j] * aux[index];
+//     } // endfor j
+//     t = aux[i];
+//     sol[i] = t + omega*s/diag;
+//   } // endfor i
+
+//   // set hanging nodes 
+//   j = RowPtr[N_Active];
+//   for(i=N_Active;i<HangingNodeBound;i++)
+//   {
+//    // printf("yes\n");
+// #ifdef _MPI
+//     if(master[i] != rank)
+//       continue;
+// #endif
+//     s = f[i];
+//     k = RowPtr[i+1];
+//     for(j = RowPtr[i];j<k;j++)
+//     {
+//       index = KCol[j];
+//       if(index != i)
+//         s -= Entries[j] * sol[index];
+//       else
+//         diag = Entries[j];
+//     } // endfor j
+//     sol[i] = s/diag;
+//   } // endfor i
 
 } // Jacobi
 
@@ -943,7 +1003,7 @@ void TMGLevel3D::SOR_Re(double *sol, double *f, double *aux,
   int repeat = TDatabase::ParamDB->Par_P6;
   if(repeat <= 0)
     repeat = 1;
-  
+   
   omega = Parameters[0];
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   
@@ -1122,7 +1182,7 @@ void TMGLevel3D::SOR_Re(double *sol, double *f, double *aux,
 
 //*****************************************************************************************************************//
 #ifdef _HYBRID
-
+ 
 void TMGLevel3D::SOR_Re_Color(double *sol, double *f, double *aux, int N_Parameters, double *Parameters,int smooth) 
 {
 //   SOR_Re(sol,f,aux,N_Parameters,Parameters);
@@ -1153,6 +1213,8 @@ void TMGLevel3D::SOR_Re_Color(double *sol, double *f, double *aux, int N_Paramet
   
 #pragma omp parallel default(shared) private(i,ii,s,k,j,jj,tid,index,diag,t,loop,itr)
   {
+//       #pragma omp master
+//       cout<<"neha: Got no. of threads "<<omp_get_num_threads()<<endl;
     // set Dirichlet nodes    
     for(itr=0;itr<end;itr++)
     {
@@ -1167,9 +1229,11 @@ void TMGLevel3D::SOR_Re_Color(double *sol, double *f, double *aux, int N_Paramet
 // 	      Reorder = ParMapper->GetReorder_M();
 	      for(ii=0;ii<N_CMaster;ii++)
 	      {
-		#pragma omp for schedule(guided) 
+              
+		#pragma omp for private(i,s,k,j,jj,tid,index,diag,t) schedule(guided) 
 		for(jj=ptrCMaster[ii];jj<ptrCMaster[ii+1];jj++)
 		{
+            
 		  i = Reorder_M[jj];
 		  if(i >= N_Active)     continue;
       
@@ -1177,6 +1241,7 @@ void TMGLevel3D::SOR_Re_Color(double *sol, double *f, double *aux, int N_Paramet
 		  k = RowPtr[i+1];
 		  for(j=RowPtr[i];j<k;j++)
 		  {
+//               cout<<"no. of non-zeros"<<k-RowPtr[i]<<endl;
 		    index = KCol[j];
 		    if(index == i)
 		    {
@@ -1200,14 +1265,14 @@ void TMGLevel3D::SOR_Re_Color(double *sol, double *f, double *aux, int N_Paramet
 	        {
 		  ParComm->CommUpdateMS(sol);
 	        }
-	        #pragma omp barrier
+	        // #pragma omp barrier
 	      }
 	    } //end firstTime
       //########################################## DEPENDENT1 DOFS #####################################################//
 // 	    Reorder = ParMapper->GetReorder_D1();
 	    for(ii=0;ii<N_CDept1;ii++)
 	    {
-	      #pragma omp for schedule(guided) 
+	      #pragma omp for private(i,s,k,j,jj,tid,index,diag,t) schedule(guided) 
 	      for(jj=ptrCDept1[ii];jj<ptrCDept1[ii+1];jj++)
 	      {
 		i = Reorder_D1[jj];
@@ -1242,7 +1307,7 @@ void TMGLevel3D::SOR_Re_Color(double *sol, double *f, double *aux, int N_Paramet
 // 	    Reorder = ParMapper->GetReorder_D2();
 	    for(ii=0;ii<N_CDept2;ii++)
 	    {
-	    #pragma omp for schedule(guided) 
+	    #pragma omp for private(i,s,k,j,jj,tid,index,diag,t) schedule(guided)
 	    for(jj=ptrCDept2[ii];jj<ptrCDept2[ii+1];jj++)
 	    {
 	      i = Reorder_D2[jj];
@@ -1275,7 +1340,7 @@ void TMGLevel3D::SOR_Re_Color(double *sol, double *f, double *aux, int N_Paramet
 // 	    Reorder = ParMapper->GetReorder_M();
 	    for(ii=0;ii<N_CMaster;ii++)
 	    {
-	      #pragma omp for schedule(guided) 
+	      #pragma omp parallel for private(i,s,k,j,jj,tid,index,diag,t) schedule(guided) 
 	      for(jj=ptrCMaster[ii];jj<ptrCMaster[ii+1];jj++)
 	      {
 		i = Reorder_M[jj];
@@ -1313,7 +1378,8 @@ void TMGLevel3D::SOR_Re_Color(double *sol, double *f, double *aux, int N_Paramet
 // 	    Reorder = ParMapper->GetReorder_I();
 	    for(ii=0;ii<N_CInt;ii++)
 	    {
-	    #pragma omp for schedule(guided) 
+//             cout<<"neha: no. of iterations "<<(ptrCInt[ii+1]-ptrCInt[ii])<<endl;
+	    #pragma omp for private(i,s,k,j,jj,tid,index,diag,t) schedule(guided) 
 	    for(jj=ptrCInt[ii];jj<ptrCInt[ii+1];jj++)
 	    {
 	      i = Reorder_I[jj];
@@ -1344,8 +1410,7 @@ void TMGLevel3D::SOR_Re_Color(double *sol, double *f, double *aux, int N_Paramet
 	    // set hanging nodes
 // 	    int *master = ParComm->GetMaster();
 
-	    #pragma omp for schedule(dynamic) nowait 
-
+	    #pragma omp for schedule(guided) nowait 
 	    for(i=N_Active;i<HangingNodeBound;i++)
 	    {
 
@@ -1371,7 +1436,7 @@ void TMGLevel3D::SOR_Re_Color(double *sol, double *f, double *aux, int N_Paramet
   
     
   }
-}  
+} 
 
 void TMGLevel3D::SOR_Re_Color(double *sol, double *f, double *aux,
         int N_Parameters, double *Parameters, bool firstTime, bool lastTime)
@@ -1784,4 +1849,22 @@ void TMGLevel3D::SOR_Re_Color_Coarse(double *sol, double *f, double *aux,
 
   
 }
+#endif
+
+#ifdef _CUDA
+#ifdef _HYBRID
+#ifdef _MPI
+	
+        void SOR_Re_GPU(double *sol, double *f, double *aux, int N_Parameters, double *Parameters,int smooth){}
+        void SOR_Re_CPU_GPU(double *sol, double *f, double *aux, int N_Parameters, double *Parameters,int smooth){}
+        void SOR_Re_Level_Split(double *sol, double *f, double *aux, int N_Parameters, double *Parameters, int smooth){}
+        void SOR_Re_Combo(double *sol, double *f, double *aux, int N_Parameters, double *Parameters, int smooth){}
+        
+        void Jacobi_Level_Split(double *sol, double *f, double *aux, int N_Parameters, double *Parameters, int smooth);
+        void Jacobi_CPU_GPU(double *sol, double *f, double *aux, int N_Parameters, double *Parameters, int smooth){}
+        void Jacobi_Combo(double *sol, double *f, double *aux, int N_Parameters, double *Parameters, int smooth){}
+    #endif
+    #endif
+    
+    void Jacobi_GPU(double *sol, double *f, double *aux, int N_Parameters, double *Parameters, int smooth){}
 #endif

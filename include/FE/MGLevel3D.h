@@ -15,6 +15,9 @@
 
 #include <SquareMatrix3D.h>
 #ifdef _MPI   
+
+    #include <ParFEMapper3D.h>
+
    #ifdef __3D__
     #include <ParFECommunicator3D.h>
    #else
@@ -22,6 +25,8 @@
    #endif
 #endif 
 
+#include<cuda.h>
+#include<cuda_runtime.h>
 // #include <omp.h>
 class TMGLevel3D
 {
@@ -213,19 +218,43 @@ class TMGLevel3D
 
     TParFECommunicator3D *GetParComm()
       { return ParComm; }
+
+    TParFEMapper3D *GetParMapper()
+      { return ParMapper; }
       
        void SOR_Re(double *sol, double *f, double *aux,
         int N_Parameters, double *Parameters);   
     
 #endif
 
+#ifdef _CUDA
+        void Jacobi_GPU(double *sol, double *f, double *aux, int N_Parameters, double *Parameters, int smooth, cudaStream_t *stream, int* d_RowPtr, int*  d_KCol, double* d_Entries, double* d_sol, int* d_aux);
+        
+#endif
+
 #ifdef _HYBRID
-        void SOR_Re_Color(double *sol, double *f, double *aux,
-			  int N_Parameters, double *Parameters, bool firstTime, bool lastTime);
+    
+    void SOR_Re_Color(double *sol, double *f, double *aux, int N_Parameters, double *Parameters, bool firstTime, bool lastTime);
+    
 	void SOR_Re_Color(double *sol, double *f, double *aux, int N_Parameters, double *Parameters,int smooth);
 	
-	void SOR_Re_Color_Coarse(double *sol, double *f, double *aux,
-				 int N_Parameters, double *Parameters);
+	void SOR_Re_Color_Coarse(double *sol, double *f, double *aux, int N_Parameters, double *Parameters);
+    
+	  
+    
+    #ifdef _MPI
+        void SOR_Re_GPU(double *sol, double *f, double *aux, int N_Parameters, double *Parameters,int smooth, cudaStream_t *stream, int* d_RowPtr, int*  d_KCol, double* d_Entries, double* d_sol, int* d_aux);
+        void SOR_Re_CPU_GPU(double *sol, double *f, double *aux, int N_Parameters, double *Parameters,int smooth, cudaStream_t *stream, int* d_RowPtr, int*  d_KCol, double* d_Entries, double* d_sol, int* d_aux);
+        // void SOR_Re_Level_Split(double *sol, double *f, double *aux, int N_Parameters, double *Parameters, int smooth);
+        void SOR_Re_Combo(double *sol, double *f, double *aux, int N_Parameters, double *Parameters, int smooth, cudaStream_t *stream, int* d_RowPtr, int*  d_KCol, double* d_Entries, double* d_sol, int* d_aux);
+
+        // void Jacobi_Level_Split(double *sol, double *f, double *aux, int N_Parameters, double *Parameters, int smooth);
+        void Jacobi_CPU_GPU(double *sol, double *f, double *aux, int N_Parameters, double *Parameters, int smooth, cudaStream_t *stream, int* d_RowPtr, int*  d_KCol, double* d_Entries, double* d_sol, int* d_aux);
+        void Jacobi_Combo(double *sol, double *f, double *aux, int N_Parameters, double *Parameters, int smooth, cudaStream_t *stream, int* d_RowPtr, int*  d_KCol, double* d_Entries, double* d_sol, int* d_aux);
+        
+        
+    #endif
+    
 #endif
        
 };
